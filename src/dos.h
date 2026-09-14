@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <vector>
 #include "cpu.h"
 #include "memory.h"
 #include "files.h"
@@ -165,12 +166,37 @@ private:
     void install_bios_data();
     bool int10();
     bool int15();
+    bool int33();
 public:
     Vga vga;
     bool set_font(const std::string& path, bool dbcs) {
         return load_fontx(path, dbcs ? font_kanji_ : font_ank_);
     }
+    // The mouse, as INT 33h presents it.
+    //
+    // JW_CAD will not start without one: overlay 8 calls function 0 (reset) and
+    // exits with "mouse driver not installed" if AX comes back zero. So the
+    // driver is always here, and what it reports is whatever the host has fed
+    // into the queue below. With an empty queue it is a mouse that is simply not
+    // being moved -- which is the right answer for a run that only wants the
+    // opening screen.
+    struct MouseEvent { int16_t x, y; uint8_t buttons; };
+    std::vector<MouseEvent> mouse_script;   // played back, one per poll
+    size_t mouse_at = 0;
+
 private:
+    void mouse_step();
+    struct {
+        int16_t x = 320, y = 240;            // driver coordinates (virtual, = pixels in 12h)
+        int16_t min_x = 0, max_x = 639, min_y = 0, max_y = 479;
+        uint16_t buttons = 0;                // bit 0 left, 1 right, 2 middle
+        int16_t show = -1;                   // >= 0: cursor visible (function 1/2 counter)
+        int16_t dx = 0, dy = 0;              // motion counters, cleared by function 0Bh
+        struct { uint16_t count = 0; int16_t x = 0, y = 0; } press[3], release[3];
+        uint16_t handler_mask = 0;
+        uint16_t handler_seg = 0, handler_off = 0;
+    } mouse_;
+
     bool font_fetch(bool dbcs);
     void install_font_stubs();
     bool load_fontx(const std::string& path, std::vector<uint8_t>& out);

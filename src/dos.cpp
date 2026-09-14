@@ -755,6 +755,8 @@ bool Dos::handle(uint8_t n) {
             return int10();
         case 0x15:                                       // BIOS misc / DOS-V fonts
             return int15();
+        case 0x33:                                       // mouse driver
+            return int33();
         case kFontIntAnk: return font_fetch(false);
         case kFontIntKanji: return font_fetch(true);
         case 0x1A:                                       // BIOS time
@@ -823,6 +825,112 @@ bool Dos::font_fetch(bool dbcs) {
     for (long i = 0; i < size; ++i)
         mem_.wb(cpu_.sreg[ES], (uint16_t)(cpu_.r[SI] + i), f[(size_t)(at + i)]);
     return true;
+}
+
+// The mouse.
+//
+// JW_CAD does not ask whether a mouse is there -- it requires one. Overlay 8
+// calls INT 33h function 0 (reset), and if AX comes back zero it restores the
+// text mode, prints "mouse driver not installed" and exits(1). That is where
+// every run ended before this: 6.6 million instructions of loading overlays
+// and reading its configuration, and then out, with nothing on the screen.
+//
+// So the driver is always installed. What it reports is a mouse sitting still
+// at wherever mouse_script has moved it -- which is what a run that only wants
+// the opening screen needs, and the hook a scripted comparison will use later.
+//
+// Positions here are the driver's "virtual" coordinates. In mode 12h those are
+// the 640x480 pixels one for one, and JW_CAD sets its own range (functions 7
+// and 8) before it ever reads a position, so the range this starts with only
+// has to be sane, not authentic.
+void Dos::mouse_step() {
+    if (mouse_at >= mouse_script.size()) return;
+    const MouseEvent e = mouse_script[mouse_at++];
+    const uint16_t was = mouse_.buttons;
+    mouse_.dx = static_cast<int16_t>(e.x - mouse_.x);
+    mouse_.dy = static_cast<int16_t>(e.y - mouse_.y);
+    mouse_.x = e.x; mouse_.y = e.y;
+    mouse_.buttons = e.buttons;
+    for (int b = 0; b < 3; ++b) {
+        const uint16_t bit = static_cast<uint16_t>(1u << b);
+        if (!(was & bit) && (e.buttons & bit)) {
+            ++mouse_.press[b].count; mouse_.press[b].x = e.x; mouse_.press[b].y = e.y;
+        } else if ((was & bit) && !(e.buttons & bit)) {
+            ++mouse_.release[b].count; mouse_.release[b].x = e.x; mouse_.release[b].y = e.y;
+        }
+    }
+}
+
+bool Dos::int33() {
+    const uint16_t fn = cpu_.r[AX];
+    auto clamp = [](int16_t v, int16_t lo, int16_t hi) {
+        return static_cast<int16_t>(v < lo ? lo : v > hi ? hi : v);
+    };
+    switch (fn) {
+        case 0x0000:                                      // reset and read status
+        case 0x0021:                                      // software reset
+            mouse_.buttons = 0;
+            mouse_.show = -1;
+            mouse_.dx = mouse_.dy = 0;
+            for (int b = 0; b < 3; ++b) { mouse_.press[b] = {}; mouse_.release[b] = {}; }
+            mouse_.x = static_cast<int16_t>((mouse_.min_x + mouse_.max_x) / 2);
+            mouse_.y = static_cast<int16_t>((mouse_.min_y + mouse_.max_y) / 2);
+            cpu_.r[AX] = 0xFFFF;                          // installed -- the whole point
+            cpu_.r[BX] = 2;                               // two buttons
+            return true;
+        case 0x0001: ++mouse_.show; return true;          // show cursor
+        case 0x0002: --mouse_.show; return true;          // hide cursor
+        case 0x0003:                                      // position and buttons
+            mouse_step();
+            cpu_.r[BX] = mouse_.buttons;
+            cpu_.r[CX] = static_cast<uint16_t>(mouse_.x);
+            cpu_.r[DX] = static_cast<uint16_t>(mouse_.y);
+            return true;
+        case 0x0004:                                      // set position
+            mouse_.x = clamp(static_cast<int16_t>(cpu_.r[CX]), mouse_.min_x, mouse_.max_x);
+            mouse_.y = clamp(static_cast<int16_t>(cpu_.r[DX]), mouse_.min_y, mouse_.max_y);
+            return true;
+        case 0x0005:                                      // button press info
+        case 0x0006: {                                    // button release info
+            mouse_step();
+            const int b = cpu_.r[BX] & 3;
+            auto& st = fn == 0x0005 ? mouse_.press[b] : mouse_.release[b];
+            cpu_.r[AX] = mouse_.buttons;
+            cpu_.r[BX] = st.count;
+            cpu_.r[CX] = static_cast<uint16_t>(st.x);
+            cpu_.r[DX] = static_cast<uint16_t>(st.y);
+            st.count = 0;                                 // reading clears the count
+            return true;
+        }
+        case 0x0007:                                      // horizontal range
+            mouse_.min_x = static_cast<int16_t>(cpu_.r[CX]);
+            mouse_.max_x = static_cast<int16_t>(cpu_.r[DX]);
+            if (mouse_.min_x > mouse_.max_x) std::swap(mouse_.min_x, mouse_.max_x);
+            mouse_.x = clamp(mouse_.x, mouse_.min_x, mouse_.max_x);
+            return true;
+        case 0x0008:                                      // vertical range
+            mouse_.min_y = static_cast<int16_t>(cpu_.r[CX]);
+            mouse_.max_y = static_cast<int16_t>(cpu_.r[DX]);
+            if (mouse_.min_y > mouse_.max_y) std::swap(mouse_.min_y, mouse_.max_y);
+            mouse_.y = clamp(mouse_.y, mouse_.min_y, mouse_.max_y);
+            return true;
+        case 0x000B:                                      // motion counters, and clear
+            mouse_step();
+            cpu_.r[CX] = static_cast<uint16_t>(mouse_.dx);
+            cpu_.r[DX] = static_cast<uint16_t>(mouse_.dy);
+            mouse_.dx = mouse_.dy = 0;
+            return true;
+        case 0x000C:                                      // install event handler
+            mouse_.handler_mask = cpu_.r[CX];
+            mouse_.handler_seg = cpu_.sreg[ES];
+            mouse_.handler_off = cpu_.r[DX];
+            return true;
+        default:
+            // Cursor shape (09h/0Ah), exclusion area (10h), sensitivity (0Fh/1Ah/1Bh)
+            // and the rest: accepted and ignored. Nothing here changes what ends up on
+            // the screen, because the cursor is not drawn by the guest.
+            return true;
+    }
 }
 
 bool Dos::int15() {
@@ -957,7 +1065,13 @@ bool Dos::int21() {
             cpu_.sb(AX, '$');
             return true;
         }
-        case 0x0B: cpu_.sb(AX, 0xFF); return true;                  // check input status: char available
+        // Check input status. "A character is waiting" was a constant 0xFF here, and it
+        // is the same lie INT 16h AH=01h was careful not to tell: JW_CAD's key poll asks
+        // this first and only reads (AH=08h) when the answer is yes, so a permanent yes
+        // made it read for ever. On a run with nothing typed into it the screen froze
+        // after the first 7 million instructions and never changed again. The honest
+        // answer comes from the same hook INT 16h uses; unset, it is no.
+        case 0x0B: cpu_.sb(AX, input_ready && input_ready() ? 0xFF : 0x00); return true;
         case 0x0C: return true;                                     // flush + input — ignore
         // Reset drive: flush DOS's write buffers. We write through, so there is nothing
         // to flush and "done" is the truthful answer — but it has to be an *answer*.
