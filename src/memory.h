@@ -43,8 +43,22 @@ public:
         return ((static_cast<uint32_t>(seg) << 4) + off) & 0xFFFFF;
     }
 
-    uint8_t  r8(uint32_t a)  const { const uint8_t* p = ro(a); return p ? p[a & kPageMask] : 0; }
+    // The video memory window is not RAM: a read there loads the VGA's latches
+    // and a write goes through its graphics controller, so both are handed to
+    // the Vga object when one is attached. Two compares on every access is the
+    // price of being able to see what the guest drew.
+    std::function<bool(uint32_t, uint8_t&)> mmio_r;
+    std::function<bool(uint32_t, uint8_t)>  mmio_w;
+    uint32_t mmio_lo = 1, mmio_hi = 0;
+    bool mmio(uint32_t a) const { return a >= mmio_lo && a < mmio_hi; }
+
+    uint8_t  r8(uint32_t a)  const {
+        if (mmio(a) && mmio_r) { uint8_t v = 0; if (mmio_r(a, v)) return v; }
+        const uint8_t* p = ro(a); return p ? p[a & kPageMask] : 0;
+    }
     uint16_t r16(uint32_t a) const {
+        if (mmio(a) || mmio(a + 1))
+            return static_cast<uint16_t>(r8(a) | (r8(a + 1) << 8));
         if ((a & kPageMask) <= kPageMask - 1) {
             const uint8_t* p = ro(a); if (!p) return 0;
             p += a & kPageMask;
@@ -53,6 +67,8 @@ public:
         return static_cast<uint16_t>(r8(a) | (r8(a + 1) << 8));     // crosses a page
     }
     uint32_t r32(uint32_t a) const {
+        if (mmio(a) || mmio(a + 3))
+            return r16(a) | (static_cast<uint32_t>(r16(a + 2)) << 16);
         if ((a & kPageMask) <= kPageMask - 3) {
             const uint8_t* p = ro(a); if (!p) return 0;
             p += a & kPageMask;
@@ -62,8 +78,15 @@ public:
              | (static_cast<uint32_t>(r8(a + 3)) << 24);
     }
 
-    void w8(uint32_t a, uint8_t v) { watched(a); page(a)[a & kPageMask] = v; }
+    void w8(uint32_t a, uint8_t v) {
+        if (mmio(a) && mmio_w && mmio_w(a, v)) return;
+        watched(a); page(a)[a & kPageMask] = v;
+    }
     void w16(uint32_t a, uint16_t v) {
+        if (mmio(a) || mmio(a + 1)) {
+            w8(a, static_cast<uint8_t>(v)); w8(a + 1, static_cast<uint8_t>(v >> 8));
+            return;
+        }
         watched(a); watched(a + 1);
         if ((a & kPageMask) <= kPageMask - 1) {
             uint8_t* p = page(a) + (a & kPageMask);
@@ -71,6 +94,10 @@ public:
         } else { w8(a, static_cast<uint8_t>(v)); w8(a + 1, static_cast<uint8_t>(v >> 8)); }
     }
     void w32(uint32_t a, uint32_t v) {
+        if (mmio(a) || mmio(a + 3)) {
+            for (int i = 0; i < 4; ++i) w8(a + i, static_cast<uint8_t>(v >> (i * 8)));
+            return;
+        }
         for (int i = 0; i < 4; ++i) watched(a + i);
         if ((a & kPageMask) <= kPageMask - 3) {
             uint8_t* p = page(a) + (a & kPageMask);

@@ -10,6 +10,7 @@
 #include "memory.h"
 #include "files.h"
 #include "dpmi.h"
+#include "vga.h"
 
 namespace dosemu {
 
@@ -23,6 +24,20 @@ public:
         dpmi_.real_int = [this](uint8_t n) { return handle(n); };
         install_ivt_stubs();
         install_bios_data();
+        mem_.mmio_lo = Vga::kBase;
+        mem_.mmio_hi = Vga::kEnd;
+        mem_.mmio_r = [this](uint32_t a, uint8_t& v) {
+            if (!vga.graphics()) return false;
+            v = vga.read(a);
+            return true;
+        };
+        mem_.mmio_w = [this](uint32_t a, uint8_t v) {
+            if (!vga.graphics()) return false;
+            vga.write(a, v);
+            return true;
+        };
+        cpu_.io_out_hook = [this](uint16_t p, uint8_t v) { return vga.io_out(p, v); };
+        cpu_.io_in_hook = [this](uint16_t p, uint8_t& v) { return vga.io_in(p, v); };
         dpmi_.get_psp = [this] { return psp_seg; };
         blocks_.push_back({kArenaMcb, static_cast<uint16_t>(heap_end_ - kArenaMcb - 1), 0, false});
         // The DPMI mode-switch entry and the list-of-lists are inside the arena and are
@@ -150,6 +165,7 @@ private:
     bool int10();
     bool int15();
 public:
+    Vga vga;
     bool set_font(const std::string& path, bool dbcs) {
         return load_fontx(path, dbcs ? font_kanji_ : font_ank_);
     }

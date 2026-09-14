@@ -30,10 +30,15 @@ int main(int argc, char** argv) {
     if (a < argc && std::string(argv[a]) == "--root" && a + 1 < argc) { root = argv[a + 1]; a += 2; }
     // DOS/V fonts, for INT 15h AX=5000h. A graphics program that draws text
     // asks the display driver for them and has none of its own.
-    std::string font_ank, font_kanji;
-    while (a + 1 < argc && (std::string(argv[a]) == "--font-ank" ||
-                            std::string(argv[a]) == "--font-kanji")) {
-        (std::string(argv[a]) == "--font-ank" ? font_ank : font_kanji) = argv[a + 1];
+    std::string font_ank, font_kanji, shot;
+    uint64_t shot_after = 0;
+    while (a + 1 < argc) {
+        const std::string o = argv[a];
+        if (o == "--font-ank") font_ank = argv[a + 1];
+        else if (o == "--font-kanji") font_kanji = argv[a + 1];
+        else if (o == "--screenshot") shot = argv[a + 1];
+        else if (o == "--after") shot_after = strtoull(argv[a + 1], nullptr, 10);
+        else break;
         a += 2;
     }
     if (a >= argc) { std::fprintf(stderr, "usage: dosemu [--root DIR] PROGRAM.EXE [args...]\n"); return 2; }
@@ -87,8 +92,24 @@ int main(int argc, char** argv) {
     dos.psp_seg = 0x0100;
     dos.init_psp(0x0100, 0x0100, dos_name);   // no real parent; point at itself, as DOS does for the shell
 
+    // A screenshot after a fixed number of instructions. The guest has no
+    // window to close and no way to say "now" -- and for comparing screens
+    // against a port of the same program, a fixed point in the run is what
+    // makes the two comparable in the first place.
     try {
-        cpu.run();
+        if (shot.empty()) {
+            cpu.run();
+        } else {
+            const uint64_t stop = shot_after ? shot_after : 400000000ull;
+            while (!cpu.halted && cpu.insns < stop) cpu.step();
+            if (dos.vga.save_png(shot))
+                std::fprintf(stderr, "dosemu: wrote %s  %dx%d  after %llu instructions\n",
+                             shot.c_str(), dos.vga.width(), dos.vga.height(),
+                             (unsigned long long)cpu.insns);
+            else
+                std::fprintf(stderr, "dosemu: no graphics screen to save\n");
+            return 0;
+        }
     } catch (const CpuError& e) {
         std::fflush(stdout);
         std::fprintf(stderr, "\ndosemu: %s  [%llu instructions]\n", e.what.c_str(),

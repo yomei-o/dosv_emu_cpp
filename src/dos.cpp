@@ -855,9 +855,13 @@ bool Dos::int10() {
                 };
             uint8_t mode = al & 0x7F;
             uint8_t cols = 80, rows = 25, cell = 16;
+            uint16_t m_width = 0;
             for (const auto& m : kModes)
-                if (m.mode == mode) { cols = m.cols; rows = m.rows; cell = m.cell; }
+                if (m.mode == mode) { cols = m.cols; rows = m.rows; cell = m.cell; m_width = m.width; }
             video_mode_ = mode;
+            // The graphics modes get planes behind A000:0000; a text mode
+            // leaves them alone, which is what makes snapshot() say "no".
+            vga.set_mode(mode, m_width, rows * cell, m_width / 8);
             mem_.wb(0x40, 0x0049, mode);
             mem_.ww(0x40, 0x004A, cols);
             mem_.wb(0x40, 0x0084, static_cast<uint8_t>(rows - 1));

@@ -84,6 +84,7 @@ void Cpu::bad_sel(int i, uint16_t sel) const {
 //                          chip with a line to spare, which is the whole reason this
 //                          is a keyboard controller's job.
 uint8_t Cpu::io_in(uint16_t port) {
+    if (io_in_hook) { uint8_t v = 0; if (io_in_hook(port, v)) return v; }
     switch (port) {
         case 0x92: return a20 ? 0x02 : 0x00;
         case 0x64: return 0x00;      // 8042 status: both buffers empty, so polls exit
@@ -93,6 +94,7 @@ uint8_t Cpu::io_in(uint16_t port) {
 }
 
 void Cpu::io_out(uint16_t port, uint8_t v) {
+    if (io_out_hook && io_out_hook(port, v)) return;
     static uint8_t kbd_cmd = 0;
     switch (port) {
         case 0x92: a20 = (v & 0x02) != 0; break;

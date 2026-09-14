@@ -104,6 +104,9 @@ public:
     // back to zero. Guests that never touch it (LSI C, DJGPP) leave it off and see
     // exactly the old behaviour; Watcom's extender refuses to start without it.
     bool a20 = false;
+    // Ports a device claims, checked before the built-in handful.
+    std::function<bool(uint16_t, uint8_t)> io_out_hook;
+    std::function<bool(uint16_t, uint8_t&)> io_in_hook;
     uint8_t io_in(uint16_t port);
     void io_out(uint16_t port, uint8_t v);
 
