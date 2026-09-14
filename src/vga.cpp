@@ -1,4 +1,5 @@
 #include "vga.h"
+#include <cstdlib>
 
 #include <cstdio>
 #include <cstring>
@@ -101,6 +102,22 @@ void Vga::write(uint32_t lin, uint8_t data) {
 }
 
 bool Vga::snapshot(unsigned char* out) const {
+    // DOSEMU_VRAM_MAP=1: how much of each plane is set inside the visible page and
+    // how much above it. "The screen is blank, so nothing was drawn" is a guess, and
+    // the wrong one if the guest drew to a second page and never flipped: 64 KB per
+    // plane holds two 640x480 pages, and mode 12h shows the first 38,400 bytes.
+    // This says which of the two it is in one line.
+    if (getenv("DOSEMU_VRAM_MAP")) {
+        const int page = width_ > 0 ? stride_ * height_ : kPlaneBytes;
+        for (int p = 0; p < kPlanes; ++p) {
+            long lo = 0, hi = 0;
+            for (int i = 0; i < kPlaneBytes; ++i)
+                (i < page ? lo : hi) += plane_[p][i] ? 1 : 0;
+            std::fprintf(stderr, "[vram] plane %d: %ld bytes set in the visible page, %ld above\n",
+                         p, lo, hi);
+        }
+    }
+
     if (width_ <= 0 || height_ <= 0) return false;
     for (int y = 0; y < height_; ++y) {
         const int row = y * stride_;

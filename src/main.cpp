@@ -76,6 +76,11 @@ bool key_word(const std::string& name, uint16_t& out) {
         {"f1", 0x3B, 0}, {"f2", 0x3C, 0}, {"f3", 0x3D, 0}, {"f4", 0x3E, 0},
         {"f5", 0x3F, 0}, {"f6", 0x40, 0}, {"f7", 0x41, 0}, {"f8", 0x42, 0},
         {"f9", 0x43, 0}, {"f10", 0x44, 0}, {"f11", 0x85, 0}, {"f12", 0x86, 0},
+        // The two keys a Japanese keyboard has and a US one does not. JW_CAD puts
+        // them in its status line ("前倍率[NFER]", "倍率指定[XFER]"), so a script
+        // that drives the zoom needs to be able to press them.
+        {"xfer", 0x79, 0}, {"henkan", 0x79, 0},
+        {"nfer", 0x7B, 0}, {"muhenkan", 0x7B, 0},
     };
     for (const auto& k : kTable)
         if (name == k.n) { out = static_cast<uint16_t>((k.scan << 8) | k.ascii); return true; }

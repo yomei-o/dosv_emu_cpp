@@ -894,6 +894,10 @@ int Dos::next_key_byte() {
 
 bool Dos::int33() {
     const uint16_t fn = cpu_.r[AX];
+    static const bool tr = getenv("DOSEMU_MOUSE_TRACE") != nullptr;
+    if (tr) std::fprintf(stderr, "[mouse] fn=%04X bx=%04X cx=%04X dx=%04X at %04X:%04X\n",
+                         fn, cpu_.r[BX], cpu_.r[CX], cpu_.r[DX],
+                         cpu_.sreg[CS], static_cast<uint16_t>(cpu_.ip));
     auto clamp = [](int16_t v, int16_t lo, int16_t hi) {
         return static_cast<int16_t>(v < lo ? lo : v > hi ? hi : v);
     };
