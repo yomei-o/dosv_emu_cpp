@@ -1,0 +1,17 @@
+# The opening screen, and then the mouse moved into the drawing area.
+#
+# 13,000,000 instructions is where JW_CAD has finished reading its settings,
+# drawn the menu, the title and the status line, and gone idle waiting for
+# input. Everything before that is loading; nothing after it changes unless
+# something is typed or clicked.
+wait 13000000
+shot tmp/01_startup.png
+
+mouse 300 200
+wait 2000000
+shot tmp/02_mouse.png
+
+# The left button over the drawing area starts a command.
+click L
+wait 3000000
+shot tmp/03_click.png

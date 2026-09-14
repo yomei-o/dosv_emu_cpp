@@ -7,6 +7,7 @@
 #include <functional>
 #include <string>
 #include <vector>
+#include <deque>
 #include "cpu.h"
 #include "memory.h"
 #include "files.h"
@@ -161,7 +162,14 @@ private:
     void write_dta_entry();
 
     void out(int fd, char c) { char b = c; if (output) output(fd, &b, 1); }
-    int  getch() { int c = input ? input() : -1; return c == '\n' ? '\r' : c; }   // -1 at EOF
+    // A scripted key comes first; stdin is the fallback. An extended key (no ASCII)
+    // reaches a DOS read as two bytes, 0x00 then the scan code -- which is how a
+    // program tells F1 from the letter it would otherwise look like.
+    int  getch() {
+        const int k = next_key_byte();
+        if (k >= 0) return k;
+        int c = input ? input() : -1; return c == '\n' ? '\r' : c;   // -1 at EOF
+    }
     void install_ivt_stubs();
     void install_bios_data();
     bool int10();
@@ -180,12 +188,19 @@ public:
     // into the queue below. With an empty queue it is a mouse that is simply not
     // being moved -- which is the right answer for a run that only wants the
     // opening screen.
-    struct MouseEvent { int16_t x, y; uint8_t buttons; };
-    std::vector<MouseEvent> mouse_script;   // played back, one per poll
-    size_t mouse_at = 0;
+    void mouse_move(int16_t x, int16_t y);
+    void mouse_button(int button, bool down);
+
+    // Keystrokes fed from a script, as the BIOS presents them: scan code in the
+    // high byte, ASCII in the low one (0 for the keys that have none). They are
+    // read before the `input` callback, so a scripted run needs no stdin at all.
+    void push_key(uint16_t k) { keys_.push_back(k); }
+    bool keys_waiting() const { return !keys_.empty() || pending_scan_ >= 0; }
 
 private:
-    void mouse_step();
+    std::deque<uint16_t> keys_;
+    int pending_scan_ = -1;     // DOS hands an extended key over as 0x00 then the scan code
+    int next_key_byte();
     struct {
         int16_t x = 320, y = 240;            // driver coordinates (virtual, = pixels in 12h)
         int16_t min_x = 0, max_x = 639, min_y = 0, max_y = 479;
