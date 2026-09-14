@@ -827,7 +827,10 @@ bool Dos::int15() {
         // DX is the cell: DH wide, DL tall. 16x16 is the kanji set, anything
         // else the single-byte one.
         const bool dbcs = (cpu_.r[DX] >> 8) == 16;
-        cpu_.sreg[ES] = kFontStubSeg;
+        // set_seg, not a bare write to sreg: the cached base is kept even in
+        // real mode, and a segment register that disagrees with its own cache
+        // sends the next far call somewhere else entirely.
+        cpu_.set_seg(ES, kFontStubSeg);
         cpu_.r[BX] = dbcs ? 4 : 0;
         cpu_.flags &= ~CF;
         return true;
