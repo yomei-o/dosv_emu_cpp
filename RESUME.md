@@ -120,6 +120,10 @@ shot tmp/01.png
 
 決め方はどれも**こちらの画面から測る**でした。
 
+* `DOSEMU_BPPTR` には**レジスタ名**も書ける（`DOSEMU_BPPTR=ax`）。
+  JW_CAD の整数三角関数は AX で返すので、「この半径とこの角度で本物は
+  何を返すか」を 636 個読むのに要った——それで円弧を折れ線にする式が
+  1 つに決まっている（jwcad_dos_wasm の RESUME「円弧」）
 * 座標変換 —— `DOSEMU_BP=0EFF:17BB DOSEMU_BPPTR=2,3,4,5` で、本物が
   線ごとに計算した画面座標（float）を出し、`.JWC` の同じ線と突き合わせる。
   答えは `screen_x = (int)(x + 121)`、`screen_y = (int)(463 - y)`、**倍率 1**
