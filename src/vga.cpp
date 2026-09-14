@@ -175,6 +175,21 @@ static void chunk(std::FILE* f, const char* tag, const unsigned char* d, uint32_
     std::fwrite(crc.data(), 1, 4, f);
 }
 
+bool Vga::save_raw(const std::string& path) const {
+    if (width_ <= 0 || height_ <= 0) return false;
+    std::vector<unsigned char> px(static_cast<size_t>(width_) * height_);
+    if (!snapshot(px.data())) return false;
+    std::FILE* f = std::fopen(path.c_str(), "wb");
+    if (!f) return false;
+    for (unsigned char p : px) {
+        const uint8_t* d = dac_[pal_[p & 15]];
+        const unsigned char rgba[4] = {dac8(d[0]), dac8(d[1]), dac8(d[2]), 255};
+        std::fwrite(rgba, 1, 4, f);
+    }
+    std::fclose(f);
+    return true;
+}
+
 bool Vga::save_png(const std::string& path) const {
     if (width_ <= 0 || height_ <= 0) return false;
     std::vector<unsigned char> px(static_cast<size_t>(width_) * height_);

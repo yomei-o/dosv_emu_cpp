@@ -47,6 +47,11 @@ public:
     // One byte per pixel, 0-15, row-major. Returns false in a text mode.
     bool snapshot(unsigned char* out) const;
     bool save_png(const std::string& path) const;
+    // The same picture as four bytes per pixel, R G B A, row by row -- byte for byte
+    // what jwcad_dos_wasm's jw_view_rgba() produces. That is the point: the two
+    // screens are compared with cmp(1), so the format has to be the port's, not a
+    // convenient one.
+    bool save_raw(const std::string& path) const;
 
     int width() const { return width_; }
     int height() const { return height_; }

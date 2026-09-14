@@ -156,7 +156,10 @@ int run_script(const std::vector<Step>& steps, dosemu::Cpu& cpu, dosemu::Dos& do
         } else if (st.op == "type") {
             for (char c : st.arg) dos.push_key(key_for_char(static_cast<uint8_t>(c)));
         } else if (st.op == "shot") {
-            if (dos.vga.save_png(st.arg))
+            // .raw writes RGBA instead: the format the port's own screenshots use,
+            // so the two can be compared with cmp(1) and nothing in between.
+            const bool raw = st.arg.size() > 4 && st.arg.compare(st.arg.size() - 4, 4, ".raw") == 0;
+            if (raw ? dos.vga.save_raw(st.arg) : dos.vga.save_png(st.arg))
                 std::fprintf(stderr, "dosemu: wrote %s  %dx%d  after %llu instructions\n",
                              st.arg.c_str(), dos.vga.width(), dos.vga.height(),
                              (unsigned long long)cpu.insns);
