@@ -68,15 +68,32 @@ int Cpu::bp_str = [] { const char* s = getenv("DOSEMU_BPSTR");
 // of a graphics call in Microsoft C's large model -- the drawing routine is handed
 // the addresses of its coordinates, not the coordinates -- and the hex of the pointer
 // says nothing at all.
+//
+// A name instead of a number derefs that register: `DOSEMU_BPPTR=bx` for Microsoft
+// C's software floating point, whose whole calling convention is "BX points at the
+// operand". Registers are stored as -1 - index so one list covers both.
 std::vector<int> Cpu::bp_ptr = [] {
+    static const char* kRegs[] = {"ax", "cx", "dx", "bx", "sp", "bp", "si", "di"};
     std::vector<int> v;
     const char* s = getenv("DOSEMU_BPPTR");
     while (s && *s) {
-        char* e = nullptr;
-        const long n = strtol(s, &e, 10);
-        if (e == s) break;
-        v.push_back(static_cast<int>(n));
-        s = (*e == ',') ? e + 1 : e;
+        bool named = false;
+        for (int i = 0; i < 8; ++i) {
+            if (strncmp(s, kRegs[i], 2) == 0) {
+                v.push_back(-1 - i);
+                s += 2;
+                named = true;
+                break;
+            }
+        }
+        if (!named) {
+            char* e = nullptr;
+            const long n = strtol(s, &e, 10);
+            if (e == s) break;
+            v.push_back(static_cast<int>(n));
+            s = e;
+        }
+        if (*s == ',') ++s;
     }
     return v;
 }();
@@ -98,8 +115,12 @@ void Cpu::bp_report() const {
         std::printf("\"");
     }
     for (int n : bp_ptr) {
-        const uint16_t o = mem_.rw(sreg[SS], static_cast<uint16_t>(r[SP] + n * 2));
-        std::printf("  [%d]->", n);
+        static const char* kRegs[] = {"ax", "cx", "dx", "bx", "sp", "bp", "si", "di"};
+        const bool reg = n < 0;
+        const uint16_t o = reg ? r[-1 - n]
+                               : mem_.rw(sreg[SS], static_cast<uint16_t>(r[SP] + n * 2));
+        if (reg) std::printf("  %s=%04X->", kRegs[-1 - n], o);
+        else     std::printf("  [%d]->", n);
         for (int i = 0; i < 4; ++i)
             std::printf("%02X", mem_.rb(sreg[DS], static_cast<uint16_t>(o + i)));
     }
