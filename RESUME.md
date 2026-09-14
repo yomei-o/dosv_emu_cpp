@@ -1,5 +1,35 @@
 # 引き継ぎ
 
+## はじめに読む人へ（この会話を知らない Claude 向け）
+
+**2 つのリポジトリが対になっています。**
+
+| | |
+|---|---|
+| [jwcad_dos_wasm](https://github.com/yomei-o/jwcad_dos_wasm) | ＪＷ＿ＣＡＤ for DOS/V を逆コンパイルして C に書き直す「移植」。ブラウザで動きます |
+| **このリポジトリ** | その移植が正しいかを確かめるための「本物」。DOS/V エミュレータで `JW_CADV.EXE` をそのまま動かします |
+
+**最終目標**は、同じ操作をしたときの画面を 2 つで突き合わせて、
+移植が本物と同じ絵を出すことを確かめることです。移植側には
+「ネイティブ対 WASM を 1 画素ずつ比べる」仕組み（`tools/check.sh`）が
+すでにあり、その相手をこのエミュレータに置き換えるのが最後の一歩です。
+
+**この 2 つは同じフォントファイルを使います。** DOS/V のプログラムは
+字形を持たず OS に尋ねるので（`INT 15h AX=5000h`）、エミュレータが
+`jwcad_dos_wasm/font/*.FNT` を返し、移植側も同じものを読みます。
+字形が違えば画面比較に意味がありません。
+
+両方を並べて置いてください。
+
+```
+どこか/
+  jwcad_dos_wasm/     移植
+  dosv_emu_cpp/       これ
+```
+
+必要なのは C++17 のコンパイラだけです（`sh build.sh`）。
+移植側をビルドするなら gcc と emscripten も要ります。
+
 ## いまどこまで
 
 `JW_CADV.EXE` が**画面を初期化して最初の 1 文字を描くところまで**動きます。
@@ -7,7 +37,13 @@ VGA のプレーンが入ったので**画面を PNG で取り出せます**。
 
 ```sh
 sh build.sh
-./dosemu --root ../jwcad_dos_wasm/orig          --font-ank  ../jwcad_dos_wasm/font/JWANK16.FNT          --font-kanji ../jwcad_dos_wasm/font/JWKAN16.FNT          --screenshot tmp/jw.png --after 5000000          ../jwcad_dos_wasm/orig/JW_CADV.EXE
+mkdir -p tmp
+./dosemu \
+  --root ../jwcad_dos_wasm/orig \
+  --font-ank ../jwcad_dos_wasm/font/JWANK16.FNT \
+  --font-kanji ../jwcad_dos_wasm/font/JWKAN16.FNT \
+  --screenshot tmp/jw.png --after 5000000 \
+  ../jwcad_dos_wasm/orig/JW_CADV.EXE
 ```
 
 いま出るのは左上に小さな橙色の描画だけです。そのあと**暴走**します。
