@@ -51,6 +51,27 @@ public:
     int width() const { return width_; }
     int height() const { return height_; }
 
+    // The colours. A pixel's four planes give an index 0-15; the attribute
+    // controller's palette turns that into a DAC entry, and the DAC holds the
+    // actual red/green/blue, six bits each. Both are guest state: JW_CAD reads
+    // JW_PAL.DAT and installs all sixteen through INT 10h (AX=1010h per entry,
+    // AX=1000h to make the attribute palette the identity), and its colours are
+    // not the EGA defaults -- 4 is green where the default is red, 7 is white
+    // where the default is light grey. A screenshot painted with the defaults
+    // is the wrong picture, and comparing it against the port proves nothing.
+    void set_pal(uint8_t reg, uint8_t v) { if (reg < 16) pal_[reg] = v & 0x3F; }
+    void set_dac(uint8_t reg, uint8_t r, uint8_t g, uint8_t b) {
+        dac_[reg][0] = r & 0x3F; dac_[reg][1] = g & 0x3F; dac_[reg][2] = b & 0x3F;
+    }
+    void get_dac(uint8_t reg, uint8_t& r, uint8_t& g, uint8_t& b) const {
+        r = dac_[reg][0]; g = dac_[reg][1]; b = dac_[reg][2];
+    }
+    uint8_t get_pal(uint8_t reg) const { return reg < 16 ? pal_[reg] : 0; }
+    // 6-bit DAC value to 8-bit, by replicating the top bits: 0x3F -> 0xFF and
+    // 0x2A -> 0xAA exactly. The port has to use the same rule or the two
+    // screenshots differ in colour while agreeing on every pixel.
+    static uint8_t dac8(uint8_t v) { return static_cast<uint8_t>((v << 2) | (v >> 4)); }
+
 private:
     uint8_t plane_[kPlanes][kPlaneBytes] = {};
     uint8_t latch_[kPlanes] = {};
@@ -59,6 +80,9 @@ private:
     uint8_t gc_index_ = 0, seq_index_ = 0;
     uint8_t status_ = 0;
     int width_ = 0, height_ = 0, stride_ = 0;
+    uint8_t pal_[16] = {};          // attribute controller: index -> DAC entry
+    uint8_t dac_[256][3] = {};      // DAC: six bits per channel
+    void reset_palette();
 };
 
 }  // namespace dosemu

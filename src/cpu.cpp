@@ -33,6 +33,55 @@ uint32_t Cpu::watch_hi = [] { const char* s = getenv("DOSEMU_WATCH");
     const char* d = s ? strchr(s, '-') : nullptr;
     return d ? (uint32_t)strtoul(d + 1, nullptr, 16) : 0u; }();
 
+// DOSEMU_BP=seg:off[,seg:off...] -- report every arrival at one of these addresses,
+// with the words on the stack above the return address. Sampling says where a guest
+// is and DOSEMU_TRACE says what it computes; neither answers "who called this
+// routine, and with what", which is the question a graphics guest raises constantly:
+// the screen is wrong, the routine that drew it is known, and what matters is the
+// coordinates it was handed. Addresses are the guest's own CS:IP, so they can be
+// copied straight out of a disassembly (plus the load base).
+std::vector<uint32_t> Cpu::bp_at = [] {
+    std::vector<uint32_t> v;
+    const char* s = getenv("DOSEMU_BP");
+    while (s && *s) {
+        char* e = nullptr;
+        const unsigned long seg = strtoul(s, &e, 16);
+        if (e == s || *e != ':') break;
+        s = e + 1;
+        const unsigned long off = strtoul(s, &e, 16);
+        if (e == s) break;
+        v.push_back(static_cast<uint32_t>(seg * 16 + off));
+        s = (*e == ',') ? e + 1 : e;
+    }
+    return v;
+}();
+
+// DOSEMU_BPSTR=N: also print the NUL-terminated string at DS:(stack word N). Which
+// word holds it depends on the call (2 for a near call's first argument, 3 for a far
+// call's), so it is given rather than guessed. Without it a text routine's argument
+// list is a row of hex that says nothing about what was drawn.
+int Cpu::bp_str = [] { const char* s = getenv("DOSEMU_BPSTR");
+    return s ? atoi(s) : -1; }();
+
+void Cpu::bp_report() const {
+    std::printf("[bp] %04X:%04X after %llu  args", sreg[CS], static_cast<uint16_t>(ip),
+                (unsigned long long)insns);
+    for (int i = 0; i < 10; ++i)
+        std::printf(" %04X", mem_.rw(sreg[SS], static_cast<uint16_t>(r[SP] + i * 2)));
+    std::printf("  ds=%04X es=%04X", sreg[DS], sreg[ES]);
+    if (bp_str >= 0) {
+        uint16_t o = mem_.rw(sreg[SS], static_cast<uint16_t>(r[SP] + bp_str * 2));
+        std::printf("  \"");
+        for (int i = 0; i < 80; ++i) {
+            const uint8_t c = mem_.rb(sreg[DS], static_cast<uint16_t>(o + i));
+            if (!c) break;
+            std::printf("%c", c >= 0x20 || c == 0x09 ? c : '.');
+        }
+        std::printf("\"");
+    }
+    std::printf("\n");
+}
+
 void Cpu::trace_insn(uint8_t op) const {
     // The instruction bytes as the guest sees them, so a trace can be read without
     // guessing where the image was loaded. Disassembling a file at `header + EIP` is a
@@ -94,6 +143,12 @@ uint8_t Cpu::io_in(uint16_t port) {
 }
 
 void Cpu::io_out(uint16_t port, uint8_t v) {
+    // DOSEMU_IO_TRACE=1: every port write. A graphics guest sets its registers through
+    // ports and nothing else says which ones it actually uses -- the histogram of this
+    // is what showed that JW_CAD touches only 0x3CE/0x3CF and never the DAC directly,
+    // so its palette had to be arriving through INT 10h.
+    static const bool io_trace = getenv("DOSEMU_IO_TRACE") != nullptr;
+    if (io_trace) std::fprintf(stderr, "[out] %04X <- %02X\n", port, v);
     if (io_out_hook && io_out_hook(port, v)) return;
     static uint8_t kbd_cmd = 0;
     switch (port) {
@@ -213,6 +268,10 @@ void Cpu::step() {
     if (hook_hi) {
         const uint32_t a = lin(CS, ip);
         if (a >= hook_lo && a < hook_hi && on_hook(a - hook_lo)) return;
+    }
+    if (!bp_at.empty()) {
+        const uint32_t a = lin(CS, ip);
+        for (uint32_t b : bp_at) if (b == a) { bp_report(); break; }
     }
     if (sample_every && !sample_left--) {
         sample_left = sample_every;

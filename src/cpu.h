@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <vector>
 #include "memory.h"
 
 namespace dosemu {
@@ -287,6 +288,11 @@ public:
     // instructions wide.
     static uint64_t trace_lo, trace_hi;
     void trace_insn(uint8_t op) const;
+    // DOSEMU_BP=seg:off[,...]: report arrivals at these addresses with the stack above
+    // the return address, which for a C function is its argument list.
+    static std::vector<uint32_t> bp_at;
+    static int bp_str;          // DOSEMU_BPSTR=N: dump stack word N as a DS-relative string
+    void bp_report() const;
 
     // ---- x87 ----------------------------------------------------------------
     // A register stack of eight doubles. Real hardware keeps 80-bit extended values;

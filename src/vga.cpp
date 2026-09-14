@@ -36,6 +36,17 @@ bool Vga::io_in(uint16_t port, uint8_t& v) {
     }
 }
 
+// What the BIOS leaves behind after a mode set: the attribute palette is the
+// identity and the DAC holds the sixteen EGA colours, so a guest that never
+// touches either draws in the colours everyone expects.
+void Vga::reset_palette() {
+    for (int i = 0; i < 16; ++i) {
+        pal_[i] = static_cast<uint8_t>(i);
+        for (int c = 0; c < 3; ++c)
+            dac_[i][c] = static_cast<uint8_t>(kEgaRgb[i][c] * 63 / 255);
+    }
+}
+
 void Vga::set_mode(uint8_t mode, int width, int height, int stride) {
     (void)mode;
     width_ = width;
@@ -45,6 +56,7 @@ void Vga::set_mode(uint8_t mode, int width, int height, int stride) {
     std::memset(latch_, 0, sizeof latch_);
     gc_[BIT_MASK] = 0xFF;
     seq_[2] = 0x0F;                       // plane write mask: all four
+    reset_palette();
 }
 
 uint8_t Vga::read(uint32_t lin) {
@@ -164,7 +176,7 @@ bool Vga::save_png(const std::string& path) const {
 
     unsigned char plte[16 * 3];
     for (int i = 0; i < 16; ++i)
-        for (int c = 0; c < 3; ++c) plte[i * 3 + c] = kEgaRgb[i][c];
+        for (int c = 0; c < 3; ++c) plte[i * 3 + c] = dac8(dac_[pal_[i]][c]);
     chunk(f, "PLTE", plte, sizeof plte);
 
     std::vector<unsigned char> raw;

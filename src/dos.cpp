@@ -803,6 +803,9 @@ bool Dos::load_fontx(const std::string& path, std::vector<uint8_t>& out) {
 // FONTX2: a 17-byte header, then either 256 images in code order (single byte)
 // or a table of code blocks followed by the images of just the codes present.
 bool Dos::font_fetch(bool dbcs) {
+    static const bool tr = getenv("DOSEMU_FONT_TRACE") != nullptr;
+    if (tr) std::fprintf(stderr, "[font]%s %04X -> %04X:%04X\n", dbcs ? "16" : " 8",
+                         cpu_.r[CX], cpu_.sreg[ES], cpu_.r[SI]);
     const std::vector<uint8_t>& f = dbcs ? font_kanji_ : font_ank_;
     if (f.size() < 18) return true;
     const int w = f[14], h = f[15];
@@ -966,6 +969,9 @@ bool Dos::int15() {
 // Microsoft C runtime stopped with "R6003".
 bool Dos::int10() {
     const uint8_t ah = cpu_.r[AX] >> 8, al = cpu_.r[AX] & 0xFF;
+    static const bool io_trace = getenv("DOSEMU_IO_TRACE") != nullptr;    // with the port writes
+    if (io_trace) std::fprintf(stderr, "[int10] ax=%04X bx=%04X cx=%04X dx=%04X es=%04X\n",
+                               cpu_.r[AX], cpu_.r[BX], cpu_.r[CX], cpu_.r[DX], cpu_.sreg[ES]);
     switch (ah) {
         case 0x00: {                                     // set video mode
             static const struct { uint8_t mode, cols, rows, cell; uint16_t width; }
@@ -1000,6 +1006,62 @@ bool Dos::int10() {
             cpu_.r[DX] = cursor_;
             cpu_.r[CX] = 0x0607;
             return true;
+        // The palette. Not decoration: JW_CAD reads JW_PAL.DAT and installs its own
+        // sixteen colours here, and they are not the EGA defaults -- index 4 is green
+        // where the default is red, 6 is yellow where the default is brown, 7 is white
+        // where the default is light grey. A screenshot painted with the defaults is
+        // the wrong picture, and the whole point of the screenshots is to compare them
+        // against the port's.
+        case 0x10:
+            switch (al) {
+                case 0x00:                               // set one attribute-palette register
+                    vga.set_pal(cpu_.r[BX] & 0xFF, cpu_.r[BX] >> 8);
+                    return true;
+                case 0x02: {                             // set all sixteen, from ES:DX
+                    for (int i = 0; i < 16; ++i)
+                        vga.set_pal(static_cast<uint8_t>(i),
+                                    mem_.rb(cpu_.sreg[ES], static_cast<uint16_t>(cpu_.r[DX] + i)));
+                    return true;                         // byte 16 is the overscan; nothing shows it
+                }
+                case 0x07:                               // read one attribute-palette register
+                    cpu_.r[BX] = static_cast<uint16_t>((cpu_.r[BX] & 0xFF) |
+                                 (vga.get_pal(cpu_.r[BX] & 0xFF) << 8));
+                    return true;
+                case 0x10:                               // set one DAC entry: DH red, CH green, CL blue
+                    vga.set_dac(static_cast<uint8_t>(cpu_.r[BX]),
+                                static_cast<uint8_t>(cpu_.r[DX] >> 8),
+                                static_cast<uint8_t>(cpu_.r[CX] >> 8),
+                                static_cast<uint8_t>(cpu_.r[CX] & 0xFF));
+                    return true;
+                case 0x12: {                             // set a block of DAC entries from ES:DX
+                    uint16_t at = cpu_.r[DX];
+                    for (uint16_t i = 0; i < cpu_.r[CX]; ++i, at = static_cast<uint16_t>(at + 3))
+                        vga.set_dac(static_cast<uint8_t>(cpu_.r[BX] + i),
+                                    mem_.rb(cpu_.sreg[ES], at),
+                                    mem_.rb(cpu_.sreg[ES], static_cast<uint16_t>(at + 1)),
+                                    mem_.rb(cpu_.sreg[ES], static_cast<uint16_t>(at + 2)));
+                    return true;
+                }
+                case 0x15: {                             // read one DAC entry
+                    uint8_t r = 0, g = 0, b = 0;
+                    vga.get_dac(static_cast<uint8_t>(cpu_.r[BX]), r, g, b);
+                    cpu_.r[DX] = static_cast<uint16_t>((r << 8) | (cpu_.r[DX] & 0xFF));
+                    cpu_.r[CX] = static_cast<uint16_t>((g << 8) | b);
+                    return true;
+                }
+                case 0x17: {                             // read a block of DAC entries to ES:DX
+                    uint16_t at = cpu_.r[DX];
+                    for (uint16_t i = 0; i < cpu_.r[CX]; ++i, at = static_cast<uint16_t>(at + 3)) {
+                        uint8_t r = 0, g = 0, b = 0;
+                        vga.get_dac(static_cast<uint8_t>(cpu_.r[BX] + i), r, g, b);
+                        mem_.wb(cpu_.sreg[ES], at, r);
+                        mem_.wb(cpu_.sreg[ES], static_cast<uint16_t>(at + 1), g);
+                        mem_.wb(cpu_.sreg[ES], static_cast<uint16_t>(at + 2), b);
+                    }
+                    return true;
+                }
+                default: return true;                    // overscan, blink, paging: nothing to show
+            }
         case 0x12:                                       // EGA/VGA configuration
             if ((cpu_.r[BX] & 0xFF) == 0x10) {           // BL=10h: get info
                 cpu_.r[BX] = 0x0003;                     // colour, 256 KB
@@ -1007,8 +1069,7 @@ bool Dos::int10() {
             }
             return true;
         default:
-            // AH=01h cursor shape, AH=10h palette and the rest change nothing
-            // the guest can read back here.
+            // AH=01h cursor shape and the rest change nothing the guest can read back.
             return true;
     }
 }
