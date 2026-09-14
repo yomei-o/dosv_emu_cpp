@@ -292,6 +292,7 @@ public:
     // the return address, which for a C function is its argument list.
     static std::vector<uint32_t> bp_at;
     static int bp_str;          // DOSEMU_BPSTR=N: dump stack word N as a DS-relative string
+    static std::vector<int> bp_ptr;   // DOSEMU_BPPTR=N,...: deref those words, 4 bytes each
     void bp_report() const;
 
     // ---- x87 ----------------------------------------------------------------

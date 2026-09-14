@@ -63,6 +63,24 @@ std::vector<uint32_t> Cpu::bp_at = [] {
 int Cpu::bp_str = [] { const char* s = getenv("DOSEMU_BPSTR");
     return s ? atoi(s) : -1; }();
 
+// DOSEMU_BPPTR=N[,N...]: treat those stack words as near pointers into DS and print
+// four bytes from each. An argument that is a pointer to a float is the normal shape
+// of a graphics call in Microsoft C's large model -- the drawing routine is handed
+// the addresses of its coordinates, not the coordinates -- and the hex of the pointer
+// says nothing at all.
+std::vector<int> Cpu::bp_ptr = [] {
+    std::vector<int> v;
+    const char* s = getenv("DOSEMU_BPPTR");
+    while (s && *s) {
+        char* e = nullptr;
+        const long n = strtol(s, &e, 10);
+        if (e == s) break;
+        v.push_back(static_cast<int>(n));
+        s = (*e == ',') ? e + 1 : e;
+    }
+    return v;
+}();
+
 void Cpu::bp_report() const {
     std::printf("[bp] %04X:%04X after %llu  args", sreg[CS], static_cast<uint16_t>(ip),
                 (unsigned long long)insns);
@@ -78,6 +96,12 @@ void Cpu::bp_report() const {
             std::printf("%c", c >= 0x20 || c == 0x09 ? c : '.');
         }
         std::printf("\"");
+    }
+    for (int n : bp_ptr) {
+        const uint16_t o = mem_.rw(sreg[SS], static_cast<uint16_t>(r[SP] + n * 2));
+        std::printf("  [%d]->", n);
+        for (int i = 0; i < 4; ++i)
+            std::printf("%02X", mem_.rb(sreg[DS], static_cast<uint16_t>(o + i)));
     }
     std::printf("\n");
 }
