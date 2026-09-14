@@ -30,12 +30,14 @@ bool Dos::trace = getenv("DOSEMU_DOS_TRACE") != nullptr;
 // environment all live at 0x0E00 and above.
 static constexpr uint16_t kIvtStubSeg = 0x0050;
 
-// The DOS/V font stubs live just past the interrupt stubs, at 0090:0000, which
-// is inside the 0x0900-0x0DFF gap nothing else uses. Two vectors above 0x80 are
+// The DOS/V font stubs live in the ROM BIOS area, at F000:FF00. Low memory is
+// not safe for them: at 0090:0000 they were gone by the time the guest used the
+// far pointer, and it ran zeroes upward until it fell out of the segment. Two vectors above 0x80 are
 // borrowed to get back here; a guest that installs its own handler there writes
 // the vector first, and these are only ever reached through the far pointer
 // INT 15h AX=5000h hands out.
-static constexpr uint16_t kFontStubSeg = 0x0090;
+static constexpr uint16_t kFontStubSeg = 0xF000;
+static constexpr uint16_t kFontStubOff = 0xFF00;
 static constexpr uint8_t kFontIntAnk = 0xEE;
 static constexpr uint8_t kFontIntKanji = 0xEF;
 
@@ -90,7 +92,6 @@ uint16_t Dos::alloc_env(const std::string& dos_name) {
 // divides by them, and stops with "run-time error R6003 - integer divide by 0"
 // before it draws anything.
 void Dos::install_bios_data() {
-    install_font_stubs();
     mem_.ww(0x40, 0x0010, 0x0021);   // equipment list: 80x25 colour, one FDD
     mem_.ww(0x40, 0x0013, 640);      // KB of conventional memory
     mem_.wb (0x40, 0x0049, 0x03);     // current video mode
@@ -777,10 +778,12 @@ bool Dos::handle(uint8_t n) {
 // that lands here, and a RETF. The fetch itself is done in C++ against a
 // FONTX2 file, which is the format DOS/V fonts come in.
 void Dos::install_font_stubs() {
-    mem_.wb(kFontStubSeg, 0, 0xCD); mem_.wb(kFontStubSeg, 1, kFontIntAnk);
-    mem_.wb(kFontStubSeg, 2, 0xCB);                           // RETF
-    mem_.wb(kFontStubSeg, 4, 0xCD); mem_.wb(kFontStubSeg, 5, kFontIntKanji);
-    mem_.wb(kFontStubSeg, 6, 0xCB);
+    mem_.wb(kFontStubSeg, kFontStubOff + 0, 0xCD);
+    mem_.wb(kFontStubSeg, kFontStubOff + 1, kFontIntAnk);
+    mem_.wb(kFontStubSeg, kFontStubOff + 2, 0xCB);            // RETF
+    mem_.wb(kFontStubSeg, kFontStubOff + 4, 0xCD);
+    mem_.wb(kFontStubSeg, kFontStubOff + 5, kFontIntKanji);
+    mem_.wb(kFontStubSeg, kFontStubOff + 6, 0xCB);
 }
 
 bool Dos::load_fontx(const std::string& path, std::vector<uint8_t>& out) {
@@ -824,6 +827,12 @@ bool Dos::font_fetch(bool dbcs) {
 
 bool Dos::int15() {
     if (cpu_.r[AX] == 0x5000) {                               // get font read routine
+        // Written here, not once at startup: something between the constructor
+        // and the guest's first call clears this part of low memory, and the
+        // three bytes were gone by the time the far pointer was used. The guest
+        // then ran zeroes from 0090:0004 upwards until it fell out of the
+        // segment -- which is what "CS=000F executing nothing" turned out to be.
+        install_font_stubs();
         // DX is the cell: DH wide, DL tall. 16x16 is the kanji set, anything
         // else the single-byte one.
         const bool dbcs = (cpu_.r[DX] >> 8) == 16;
@@ -831,7 +840,7 @@ bool Dos::int15() {
         // real mode, and a segment register that disagrees with its own cache
         // sends the next far call somewhere else entirely.
         cpu_.set_seg(ES, kFontStubSeg);
-        cpu_.r[BX] = dbcs ? 4 : 0;
+        cpu_.r[BX] = static_cast<uint16_t>(kFontStubOff + (dbcs ? 4 : 0));
         cpu_.flags &= ~CF;
         return true;
     }

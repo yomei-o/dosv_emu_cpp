@@ -24,6 +24,7 @@ public:
         dpmi_.real_int = [this](uint8_t n) { return handle(n); };
         install_ivt_stubs();
         install_bios_data();
+        // install_font_stubs() is deliberately not called here; INT 15h does it.
         mem_.mmio_lo = Vga::kBase;
         mem_.mmio_hi = Vga::kEnd;
         mem_.mmio_r = [this](uint32_t a, uint8_t& v) {
