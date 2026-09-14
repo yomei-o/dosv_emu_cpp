@@ -1,0 +1,12 @@
+# A real drawing on screen. Pass the file on the command line:
+#
+#   ./dosemu --root ../jwcad_dos_wasm/orig \
+#            --font-ank ../jwcad_dos_wasm/font/JWANK16.FNT \
+#            --font-kanji ../jwcad_dos_wasm/font/JWKAN16.FNT \
+#            --script scripts/drawing.txt \
+#            ../jwcad_dos_wasm/orig/JW_CADV.EXE SAMPLE1.JWC
+#
+# JW_CAD reads the file, adopts its scale and paper size, and redraws. 60
+# million instructions is past the end of that for the largest of the samples.
+wait 60000000
+shot tmp/drawing.png

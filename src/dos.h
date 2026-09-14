@@ -195,6 +195,9 @@ public:
     // high byte, ASCII in the low one (0 for the keys that have none). They are
     // read before the `input` callback, so a scripted run needs no stdin at all.
     void push_key(uint16_t k) { keys_.push_back(k); }
+
+    // One byte of guest memory, for the script's `dump`.
+    uint8_t peek(uint16_t seg, uint16_t off) const { return mem_.rb(seg, off); }
     bool keys_waiting() const { return !keys_.empty() || pending_scan_ >= 0; }
 
 private:

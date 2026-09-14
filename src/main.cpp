@@ -117,6 +117,12 @@ std::vector<Step> read_script(const char* path, std::string& err) {
         st.op = s.substr(0, sp);
         st.arg = sp == std::string::npos ? "" : s.substr(s.find_first_not_of(" \t", sp));
         if (st.op == "wait" || st.op == "run") st.n = std::strtol(st.arg.c_str(), nullptr, 10);
+        else if (st.op == "dump") {                          // dump SEG:OFF [count]
+            char* e = nullptr;
+            st.x = static_cast<int>(std::strtoul(st.arg.c_str(), &e, 16));
+            st.y = (e && *e == ':') ? static_cast<int>(std::strtoul(e + 1, &e, 16)) : 0;
+            st.n = (e && *e) ? std::strtol(e, nullptr, 10) : 16;
+        }
         else if (st.op == "mouse") {
             char* e = nullptr;
             st.x = static_cast<int>(std::strtol(st.arg.c_str(), &e, 10));
@@ -156,6 +162,17 @@ int run_script(const std::vector<Step>& steps, dosemu::Cpu& cpu, dosemu::Dos& do
                              (unsigned long long)cpu.insns);
             else
                 std::fprintf(stderr, "dosemu: no graphics screen to save (%s)\n", st.arg.c_str());
+        } else if (st.op == "dump") {
+            // Guest memory at a point in the run. DOSEMU_WATCH says *that* an address
+            // was touched and DOSEMU_BP says what was on the stack; neither answers
+            // "what is in this variable right now", which is the question a screen that
+            // stayed blank raises -- the drawing loop's clip window is sixteen bytes of
+            // DGROUP and reading them settles it in one line.
+            std::fprintf(stderr, "[dump] %04X:%04X", (unsigned)st.x, (unsigned)st.y);
+            for (long i = 0; i < st.n; ++i)
+                std::fprintf(stderr, " %02X", dos.peek(static_cast<uint16_t>(st.x),
+                                                       static_cast<uint16_t>(st.y + i)));
+            std::fprintf(stderr, "\n");
         } else if (st.op == "end") {
             break;
         } else {

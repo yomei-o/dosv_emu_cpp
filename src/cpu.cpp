@@ -847,6 +847,8 @@ void Cpu::step() {
             cnt &= 0x1F;
             uint32_t msb = word ? vmsb : 0x80; uint32_t mask = word ? vmask : 0xFF;
             uint32_t val = word ? rvm(m) : r8m(m);
+            const uint32_t orig = val;                 // SHR and RCR define OF on the input
+            const bool orig_cf = get_flag(CF);
             for (uint8_t k = 0; k < cnt; ++k) {
                 switch (m.reg) {
                     case 0: { bool c = val & msb; val = ((val << 1) | (c?1:0)) & mask; set_flag(CF, c); break; }               // ROL
@@ -858,7 +860,40 @@ void Cpu::step() {
                     case 7: { set_flag(CF, val & 1); uint32_t s = val & msb; val = ((val >> 1) | s) & mask; break; }          // SAR
                 }
             }
-            if (cnt) { set_flag(ZF, (val & mask) == 0); set_flag(SF, val & msb); set_flag(PF, parity(val & 0xFF)); }
+            // A rotate touches only CF and OF; a shift also sets the arithmetic flags.
+            // Setting SF/ZF/PF after a rotate is not merely untidy -- it destroys the
+            // result of the compare a caller made before it.
+            if (cnt && m.reg >= 4) {
+                set_flag(ZF, (val & mask) == 0); set_flag(SF, val & msb);
+                set_flag(PF, parity(val & 0xFF));
+            }
+            // The overflow flag, which used to be left alone entirely.
+            //
+            // Architecturally it is defined only for a count of one, and it is not a
+            // detail: `shl dx,1; rcl bx,1; jno` is *the* way to normalise a mantissa,
+            // and Microsoft C's software floating-point package is built on it. With OF
+            // stuck at zero the loop never stopped at the right place, every int-to-float
+            // conversion in JW_CAD came out as 1.0, the drawing's clip window became the
+            // single point (1.0, 1.0), and every line was clipped away -- a program that
+            // loaded its drawing, walked all 762 lines, and drew a blank screen.
+            //
+            //   ROL, RCL, SHL/SAL   MSB(result) XOR CF(result)
+            //   ROR                 the two top bits of the result, XORed
+            //   RCR                 MSB(operand) XOR CF, both from before the rotate
+            //   SHR                 MSB(operand)
+            //   SAR                 0
+            if (cnt == 1) {
+                bool of;
+                switch (m.reg) {
+                    case 0: case 2: case 4: case 6:
+                        of = ((val & msb) != 0) != get_flag(CF); break;
+                    case 1:  of = ((val & msb) != 0) != ((val & (msb >> 1)) != 0); break;
+                    case 3:  of = ((orig & msb) != 0) != orig_cf; break;
+                    case 5:  of = (orig & msb) != 0; break;
+                    default: of = false; break;                                  // SAR
+                }
+                set_flag(OF, of);
+            }
             if (word) wvm(m, val & mask); else w8m(m, val & mask);
             break;
         }
