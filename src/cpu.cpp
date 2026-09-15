@@ -102,6 +102,16 @@ std::vector<int> Cpu::bp_ptr = [] {
 // that takes a dozen arguments -- a drawing primitive with two doubles and a handful
 // of flags -- runs off the end of the default list, and the argument that decides
 // what it drew is the one that is missing.
+// DOSEMU_BPPTRAT=N and DOSEMU_BPPTRN=N: where in the pointed-at structure to start
+// and how many bytes to print. A drawing routine that is handed a state block keeps
+// what decides the drawing well inside it -- JW_CAD's small-arc plotter reads a table
+// of quadrant boxes at +0x28 -- and the first four bytes say nothing about that.
+int Cpu::bp_ptr_at = [] { const char* s = getenv("DOSEMU_BPPTRAT");
+    return s ? atoi(s) : 0; }();
+int Cpu::bp_ptr_n = [] { const char* s = getenv("DOSEMU_BPPTRN");
+    const int n = s ? atoi(s) : 4;
+    return n < 1 ? 1 : n > 256 ? 256 : n; }();
+
 int Cpu::bp_words = [] { const char* s = getenv("DOSEMU_BPN");
     const int n = s ? atoi(s) : 10;
     return n < 1 ? 1 : n > 64 ? 64 : n; }();
@@ -151,7 +161,7 @@ void Cpu::bp_report() const {
                                : mem_.rw(sreg[SS], static_cast<uint16_t>(r[SP] + n * 2));
         if (reg) std::printf("  %s=%04X->", kRegs[-1 - n], o);
         else     std::printf("  [%d]->", n);
-        for (int i = 0; i < 4; ++i)
+        for (int i = bp_ptr_at; i < bp_ptr_at + bp_ptr_n; ++i)
             std::printf("%02X", mem_.rb(sreg[DS], static_cast<uint16_t>(o + i)));
     }
     for (int n : bp_dbl) {
