@@ -113,10 +113,16 @@ bool Dos::call_far(uint16_t seg, uint16_t off, uint16_t es, uint16_t bx) {
     cpu_.set_seg(CS, seg);
     cpu_.ip = off;
 
+    // A console read blocks until there is a character, so the driver spins on
+    // the keyboard here -- and the script that is supposed to type is outside
+    // this loop. Letting it act every so often is what makes the two parts of
+    // the same clock agree: instructions are what the script counts, and these
+    // are instructions.
     bool ok = false;
     for (long i = 0; i < 200000000L; ++i) {
         if (cpu_.sreg[CS] == kConSeg && (cpu_.ip & 0xFFFF) == kRetOff) { ok = true; break; }
         if (cpu_.halted) break;
+        if (pump_script && !(i & 0x3FF)) pump_script();
         cpu_.step();
     }
 
@@ -267,11 +273,8 @@ bool Dos::load_device(const std::string& path, const std::string& args, std::str
     uint16_t hdr = 0;
     int installed = 0;
     for (int guard = 0; guard < 16; ++guard) {
-        const uint16_t attr = mem_.rw(seg, hdr + 4);
         const uint16_t strat = mem_.rw(seg, hdr + 6);
         const uint16_t intr = mem_.rw(seg, hdr + 8);
-        char name[9] = {0};
-        for (int i = 0; i < 8; ++i) name[i] = static_cast<char>(mem_.rb(seg, hdr + 10 + i));
 
         for (int i = 0; i < 26; ++i) mem_.wb(drv_work_, static_cast<uint16_t>(i), 0);
         mem_.wb(drv_work_, 0, 26);                       // length
@@ -290,9 +293,16 @@ bool Dos::load_device(const std::string& path, const std::string& args, std::str
         const uint16_t keep = end_lin > base_lin
                             ? static_cast<uint16_t>((end_lin - base_lin + 15) / 16) : 0;
 
+        // The header is read *after* INIT, because until then it may not be the
+        // driver's own. OTRI.SYS is DIET-compressed: what sits at offset 0 on
+        // disk is the decompressor's header, with the attribute word intact --
+        // DOS needs that to install it at all -- but the name field overwritten
+        // with the decompressor's code. INIT unpacks 鳳 over it, and only then
+        // does the header say CON.
         Device d;
         d.seg = seg; d.hdr = hdr; d.attr = mem_.rw(seg, hdr + 4);
-        std::memcpy(d.name, name, 9);
+        for (int i = 0; i < 8; ++i) d.name[i] = static_cast<char>(mem_.rb(seg, hdr + 10 + i));
+        d.name[8] = 0;
         for (int i = 7; i >= 0 && d.name[i] == ' '; --i) d.name[i] = 0;
 
         if ((status & 0x8000) || keep == 0) {
@@ -302,8 +312,11 @@ bool Dos::load_device(const std::string& path, const std::string& args, std::str
             devices_.push_back(d);
             ++installed;
             // A driver that calls itself CON becomes the console, and the one it
-            // replaces is the one it chained to during its own INIT.
-            if (std::strcmp(d.name, "CON") == 0 && (d.attr & 0x8000)) {
+            // replaces is the one it chained to during its own INIT. Bit 0 of
+            // the attribute says the same thing in the way DOS actually acts on
+            // it -- "this is the standard input device" is what re-points CON,
+            // and a driver whose name got lost on the way still claims it.
+            if ((d.attr & 0x8000) && (std::strcmp(d.name, "CON") == 0 || (d.attr & 1))) {
                 con_seg_ = seg; con_hdr_ = hdr;
                 con_driver_ = true;
                 publish_lol();

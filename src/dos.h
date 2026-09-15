@@ -82,6 +82,14 @@ public:
     // the truthful answer for a non-interactive run and the only safe default: claiming a
     // key is ready sends the caller into a blocking read.
     std::function<bool()> input_ready;
+    // The input script, given a chance to run. A script measures time in
+    // instructions, and a device driver answering a console read executes them
+    // by the million inside a single outer step: 鳳 waits for a key by spinning
+    // on INT 16h, and with nothing able to put one there while it spins, the
+    // run stops dead at the first character the script types. So wherever the
+    // emulator runs instructions on its own -- here and in call_far() -- it
+    // gives the script the same chance to act it would have had outside.
+    std::function<void()> pump_script;
 
     uint16_t psp_seg = 0;   // set by the loader
     // The current program's environment *segment*. Kept here rather than read back
@@ -230,6 +238,15 @@ private:
     void install_ivt_stubs();
     void install_bios_data();
     bool int10();
+    // The DOS/V text screen (src/text.cpp): BIOS text output, drawn with the
+    // same fonts the guest asks for. A FEP's window goes through here.
+    bool int10_text(uint8_t ah);
+    void text_cell(int col, int row, uint16_t code, uint8_t attr);
+    uint16_t& text_at(int col, int row);
+    void text_cursor(int& col, int& row) const;
+    void text_set_cursor(int col, int row);
+    int  text_write(int col, int row, const uint8_t* s, int n, const uint8_t* attrs,
+                    uint8_t attr);
     bool int15();
     bool int33();
 public:
@@ -315,6 +332,14 @@ private:
     bool load_fontx(const std::string& path, std::vector<uint8_t>& out);
     std::vector<uint8_t> font_ank_, font_kanji_;
     uint8_t video_mode_ = 0x03;
+    // Whether the DOS/V display driver has split off a system line. A FEP asks
+    // for it (INT 10h AH=1Dh) and then writes its window on the row *below* the
+    // application's last one -- which only exists because the split took a row
+    // away from the application.
+    bool text_split_ = false;
+    // The text screen as the display driver remembers it: one word a cell, the
+    // byte in the low half and the attribute in the high one.
+    std::vector<uint16_t> text_ram_;
     uint16_t cursor_ = 0;
     bool int21();
     bool int21_default(uint8_t n);

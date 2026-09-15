@@ -774,6 +774,11 @@ bool Dos::handle(uint8_t n) {
             }
         }
         case 0x16: {                                     // BIOS keyboard services
+            // Who takes a key, and who only looks. With a FEP installed there
+            // are two readers of the same ring -- the application and the
+            // driver sitting in front of it -- and when a keystroke disappears
+            // the only useful question is which of them had it last.
+            static const bool kbd_trace = getenv("DOSEMU_KBD_TRACE") != nullptr;
             uint8_t ah = cpu_.r[AX] >> 8;
             if (trace) std::fprintf(stderr, "[int16] ah=%02X at %04X:%08X\n",
                                     ah, cpu_.sreg[CS], cpu_.ip);
@@ -784,6 +789,7 @@ bool Dos::handle(uint8_t n) {
                     return true;
                 }
                 const int k = kbd_pop(true);
+                if (kbd_trace) std::fprintf(stderr, "[kbd] ah=%02X take=%d\n", ah, k);
                 if (k >= 0) { cpu_.r[AX] = static_cast<uint16_t>(k); return true; }
                 // host_getch, not getch: this is the BIOS, *below* whatever holds
                 // CON. A FEP reads the keyboard here while it is answering the
@@ -799,6 +805,8 @@ bool Dos::handle(uint8_t n) {
                     return true;
                 }
                 const int k = kbd_pop(false);
+                if (kbd_trace) std::fprintf(stderr, "[kbd] ah=%02X peek=%d from %04X:%04X\n",
+                                            ah, k, cpu_.sreg[CS], (uint16_t)cpu_.ip);
                 if (k >= 0) { cpu_.flags &= ~ZF; cpu_.r[AX] = static_cast<uint16_t>(k); return true; }
                 // This used to answer "yes, Enter is waiting" unconditionally, which is
                 // the same shape of lie as every other bug on this project: a caller that
@@ -1105,6 +1113,7 @@ bool Dos::int10() {
             mem_.wb(0x40, 0x0049, mode);
             mem_.ww(0x40, 0x004A, cols);
             mem_.wb(0x40, 0x0084, static_cast<uint8_t>(rows - 1));
+            text_split_ = false;                         // a mode set undoes the split
             mem_.ww(0x40, 0x0085, cell);
             return true;
         }
@@ -1113,6 +1122,28 @@ bool Dos::int10() {
                 (mem_.rb(0x40, 0x004A) << 8) | video_mode_);
             cpu_.r[BX] = static_cast<uint16_t>(cpu_.r[BX] & 0x00FF);  // page 0
             return true;
+        case 0x09: case 0x0A: case 0x0E: case 0x13:      // text output, drawn as glyphs
+            return int10_text(ah);
+        // The DOS/V system line. There is no row 31 on a 480-line screen, so a
+        // FEP that simply wrote below the last one would write off the bottom
+        // -- 鳳 puts its 「鳳」 mark at [0040:0084]+1 and its input line there
+        // too. The row exists because the driver makes it: AX=1D00h with BX=1
+        // takes the last row away from the application and keeps it for the
+        // system, which is what the FEP asks for before it writes anything.
+        case 0x1D: {
+            const uint8_t al = cpu_.r[AX] & 0xFF;
+            if (al == 0x00) {
+                const bool want = cpu_.r[BX] != 0;
+                if (want != text_split_) {
+                    const uint8_t last = mem_.rb(0x40, 0x0084);
+                    mem_.wb(0x40, 0x0084, static_cast<uint8_t>(want ? last - 1 : last + 1));
+                    text_split_ = want;
+                }
+            } else if (al == 0x02) {
+                cpu_.r[BX] = text_split_ ? 1 : 0;
+            }
+            return true;
+        }
         case 0x02:                                       // set cursor position
             cursor_ = cpu_.r[DX];
             return true;
@@ -1258,6 +1289,18 @@ bool Dos::int21() {
             cpu_.set_seg(ES, drv_work_); cpu_.r[BX] = 0x0300;
             mem_.wb(drv_work_, 0x0300, 0);
             return true;
+        // Terminate and stay resident. The block shrinks to what DX says and
+        // keeps its owner, so nothing hands it out again; then the program ends
+        // like any other. This is how a FEP's companion installs itself --
+        // wxpdosv hooks the J-3100 BIOS calls WXP makes and then stays.
+        case 0x31: {
+            const uint16_t keep = cpu_.r[DX] ? cpu_.r[DX] : 0x11;
+            mem_resize(psp_seg, keep);
+            std::fprintf(stderr, "dosemu: %s stayed resident: %04X, %u paragraphs\n",
+                         prog_path.c_str(), psp_seg, keep);
+            terminate(cpu_.r[AX] & 0xFF);
+            return true;
+        }
         case 0x0C: return true;                                     // flush + input — ignore
         // Reset drive: flush DOS's write buffers. We write through, so there is nothing
         // to flush and "done" is the truthful answer — but it has to be an *answer*.
