@@ -6,3 +6,4 @@ tmp/
 # WXP for J-3100 is free to use but its licence forbids putting it on a
 # network without the publisher's permission, so it stays out of the repo.
 fep/local/
+__pycache__/
