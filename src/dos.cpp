@@ -1090,6 +1090,7 @@ bool Dos::int15() {
 // and divides by them. With nothing behind the call it divided by zero and the
 // Microsoft C runtime stopped with "R6003".
 bool Dos::int10() {
+    static const bool cursor_trace = getenv("DOSEMU_TEXT_TRACE") != nullptr;
     const uint8_t ah = cpu_.r[AX] >> 8, al = cpu_.r[AX] & 0xFF;
     static const bool io_trace = getenv("DOSEMU_IO_TRACE") != nullptr;    // with the port writes
     if (io_trace) std::fprintf(stderr, "[int10] ax=%04X bx=%04X cx=%04X dx=%04X es=%04X\n",
@@ -1144,10 +1145,18 @@ bool Dos::int10() {
             }
             return true;
         }
+        // The cursor. A graphics program has nothing to show for it, but it
+        // still keeps one, and a FEP doing inline input asks where it is to
+        // decide which row to put its window on. These two lines are the answer
+        // to "why did the conversion window land *there*".
         case 0x02:                                       // set cursor position
+            if (cursor_trace) std::fprintf(stderr, "[text] cursor <- %04X by %04X:%04X\n",
+                                           cpu_.r[DX], cpu_.sreg[CS], (uint16_t)cpu_.ip);
             cursor_ = cpu_.r[DX];
             return true;
         case 0x03:                                       // get cursor position
+            if (cursor_trace) std::fprintf(stderr, "[text] cursor -> %04X by %04X:%04X\n",
+                                           cursor_, cpu_.sreg[CS], (uint16_t)cpu_.ip);
             cpu_.r[DX] = cursor_;
             cpu_.r[CX] = 0x0607;
             return true;
