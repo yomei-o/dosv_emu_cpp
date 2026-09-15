@@ -199,7 +199,7 @@ int main(int argc, char** argv) {
     if (a < argc && std::string(argv[a]) == "--root" && a + 1 < argc) { root = argv[a + 1]; a += 2; }
     // DOS/V fonts, for INT 15h AX=5000h. A graphics program that draws text
     // asks the display driver for them and has none of its own.
-    std::string font_ank, font_kanji, shot, script;
+    std::string font_ank, font_kanji, shot, script, dict;
     uint64_t shot_after = 0;
     while (a + 1 < argc) {
         const std::string o = argv[a];
@@ -208,11 +208,13 @@ int main(int argc, char** argv) {
         else if (o == "--screenshot") shot = argv[a + 1];
         else if (o == "--after") shot_after = strtoull(argv[a + 1], nullptr, 10);
         else if (o == "--script") script = argv[a + 1];
+        else if (o == "--dict") dict = argv[a + 1];
         else break;
         a += 2;
     }
     if (a >= argc) {
         std::fprintf(stderr, "usage: dosemu [--root DIR] [--font-ank F] [--font-kanji F]\n"
+                             "              [--dict SKK-JISYO]\n"
                              "              [--script F | --screenshot P --after N] PROGRAM.EXE [args...]\n");
         return 2;
     }
@@ -238,6 +240,16 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "dosemu: %s is not a FONTX2 font\n", font_ank.c_str());
     if (!font_kanji.empty() && !dos.set_font(font_kanji, true))
         std::fprintf(stderr, "dosemu: %s is not a FONTX2 font\n", font_kanji.c_str());
+    // The FEP's dictionary. Given no --dict, look beside the executable, which
+    // is where fep/SKK-JISYO.L sits in a checkout; a run from anywhere else can
+    // name it. Nothing is read until a conversion is asked for.
+    if (dict.empty()) {
+        std::string exe = argv[0];
+        const size_t cut = exe.find_last_of("/\\");
+        dict = (cut == std::string::npos ? std::string() : exe.substr(0, cut + 1))
+             + "fep/SKK-JISYO.L";
+    }
+    dos.ime().set_dict(dict);
     dos.output = [](int fd, const char* data, size_t len) {
         std::fwrite(data, 1, len, fd == 2 ? stderr : stdout);
         std::fflush(fd == 2 ? stderr : stdout);

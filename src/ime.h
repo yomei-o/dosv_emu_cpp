@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <deque>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace dosemu {
@@ -45,19 +46,36 @@ public:
     bool has_out() const { return !out_.empty(); }
     int  pop_out();
 
+    // Where the kana-to-kanji dictionary is. It is read the first time a
+    // conversion is asked for, not at startup: most runs of this emulator draw
+    // a drawing and never touch the keyboard, and four megabytes of dictionary
+    // is a slow way to do nothing.
+    void set_dict(const std::string& path) { dict_path_ = path; }
+
     // Is there anything half-typed? A conversion in progress is why a console
     // read blocks even though keys have been pressed: the keys are here, inside
     // the FEP, and no confirmed byte has come of them yet.
-    bool busy() const { return !raw_.empty() || !kana_.empty(); }
+    bool busy() const { return !raw_.empty() || !kana_.empty() || !segs_.empty(); }
 
 private:
+    // One piece of the undecided string: the kana the user typed and, once it
+    // has been through the dictionary, what it could become.
+    struct Seg {
+        std::string kana;
+        std::vector<std::string> cand;   // empty: nothing in the dictionary, kana it stays
+        size_t pick = 0;
+        const std::string& text() const { return cand.empty() ? kana : cand[pick]; }
+    };
+
     void draw();
     void erase();
     void confirm_kana();
     void put_kana(uint16_t code);
     void take_romaji();
+    void convert();
     void cell(int x, int y, uint16_t code, uint8_t fg, uint8_t bg);
     int  text(int x, int y, const std::string& s, uint8_t fg, uint8_t bg);
+    void load_dict();
 
     Vga* vga_ = nullptr;
     const std::vector<uint8_t>* ank_ = nullptr;
@@ -66,9 +84,15 @@ private:
     bool on_ = false;
     std::string raw_;              // romaji typed but not yet a kana
     std::string kana_;             // the undecided string, Shift-JIS
+    std::vector<Seg> segs_;        // ...cut into pieces once it has been converted
+    size_t cur_ = 0;               // which piece the space bar is working on
     std::deque<uint8_t> out_;      // confirmed bytes, waiting for the guest
     std::vector<uint8_t> saved_;   // the screen under the window
     bool shown_ = false;
+
+    std::string dict_path_;
+    bool dict_tried_ = false;
+    std::unordered_map<std::string, std::vector<std::string>> dict_;
 };
 
 }  // namespace dosemu
