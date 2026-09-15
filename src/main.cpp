@@ -89,6 +89,15 @@ bool key_word(const std::string& name, uint16_t& out) {
         out = static_cast<uint16_t>(std::strtoul(name.c_str() + 1, nullptr, 16) & 0xFF);
         return out != 0;
     }
+    // xHHHH: the whole BIOS word, scan code and all. The keys a Japanese
+    // keyboard has beyond the US one have no name here that would mean the same
+    // on every machine -- 鳳 starts on 変換, which its own table writes as
+    // 0B2FFh, meaning the scan code 0B2h with no character -- so a script that
+    // drives a FEP has to be able to say exactly what the keyboard sent.
+    if (name.size() == 5 && name[0] == 'x') {
+        out = static_cast<uint16_t>(std::strtoul(name.c_str() + 1, nullptr, 16));
+        return true;
+    }
     return false;
 }
 
@@ -136,17 +145,29 @@ std::vector<Step> read_script(const char* path, std::string& err) {
 
 // Returns the exit code, or -1 if the script ran to the end without one.
 int run_script(const std::vector<Step>& steps, dosemu::Cpu& cpu, dosemu::Dos& dos) {
-    auto advance = [&](long n) {
-        for (long i = 0; i < n && !cpu.halted; ++i) cpu.step();
-    };
+    // The script as a timeline. `wait` is not a step but the clock between two
+    // of them, and the clock is the instruction counter -- which is not the same
+    // as a count of turns round an outer loop, though it was while every turn
+    // ran one instruction. A console read answered by a device driver runs
+    // millions inside a single turn, so a `wait` after one never came round and
+    // the run stopped at the first character the script typed.
+    std::vector<std::pair<uint64_t, const Step*>> at;
+    uint64_t clock = 0;
     for (const Step& st : steps) {
-        if (cpu.halted && st.op != "shot") continue;    // a picture of the last screen still works
-        if (st.op == "wait" || st.op == "run") advance(st.n);
-        else if (st.op == "mouse") dos.mouse_move(static_cast<int16_t>(st.x),
-                                                  static_cast<int16_t>(st.y));
+        if (st.op == "wait" || st.op == "run") clock += static_cast<uint64_t>(st.n);
+        else at.push_back({clock, &st});
+    }
+    const uint64_t base = cpu.insns, end_at = base + clock;
+    size_t next = 0;
+    bool inside = false, stop = false;
+
+    auto act = [&](const Step& st) {
+        if (cpu.halted && st.op != "shot") return;     // a picture of the last screen still works
+        if (st.op == "mouse") dos.mouse_move(static_cast<int16_t>(st.x),
+                                             static_cast<int16_t>(st.y));
         else if (st.op == "down" || st.op == "up" || st.op == "click") {
             const int b = button_index(st.arg);
-            if (b < 0) { std::fprintf(stderr, "dosemu: script: unknown button '%s'\n", st.arg.c_str()); continue; }
+            if (b < 0) { std::fprintf(stderr, "dosemu: script: unknown button '%s'\n", st.arg.c_str()); return; }
             if (st.op != "up") dos.mouse_button(b, true);
             if (st.op != "down") dos.mouse_button(b, false);
         } else if (st.op == "key") {
@@ -182,11 +203,33 @@ int run_script(const std::vector<Step>& steps, dosemu::Cpu& cpu, dosemu::Dos& do
                                                        static_cast<uint16_t>(st.y + i)));
             std::fprintf(stderr, "\n");
         } else if (st.op == "end") {
-            break;
+            stop = true;
         } else {
             std::fprintf(stderr, "dosemu: script: unknown command '%s'\n", st.op.c_str());
         }
+    };
+
+    // Every step whose moment has come. The emulator calls this from inside its
+    // own nested runs as well (Dos::pump_script), so it has to be safe to call
+    // while it is already running.
+    auto fire = [&]() {
+        if (inside) return;
+        inside = true;
+        while (!stop && next < at.size() && cpu.insns >= base + at[next].first)
+            act(*at[next++].second);
+        inside = false;
+    };
+
+    dos.pump_script = fire;
+    while (!stop && !cpu.halted) {
+        fire();
+        if (stop) break;
+        const uint64_t target = next < at.size() ? base + at[next].first : end_at;
+        if (cpu.insns >= target) break;
+        while (cpu.insns < target && !cpu.halted) cpu.step();
     }
+    fire();
+    dos.pump_script = nullptr;
     return cpu.halted ? cpu.exit_code : -1;
 }
 
@@ -200,7 +243,7 @@ int main(int argc, char** argv) {
     // DOS/V fonts, for INT 15h AX=5000h. A graphics program that draws text
     // asks the display driver for them and has none of its own.
     std::string font_ank, font_kanji, shot, script, dict;
-    std::vector<std::string> devices;
+    std::vector<std::string> devices, runs;
     uint64_t shot_after = 0;
     while (a + 1 < argc) {
         const std::string o = argv[a];
@@ -213,12 +256,17 @@ int main(int argc, char** argv) {
         // --device "PATH ARGS": a CONFIG.SYS line, minus the DEVICE=. Repeatable,
         // and loaded in the order given, because drivers chain to each other.
         else if (o == "--device") devices.push_back(argv[a + 1]);
+        // --run "PROG ARGS": AUTOEXEC.BAT in miniature. The program runs to
+        // termination before the main one; if it ends with AH=31h its memory
+        // stays, which is the only way to install a TSR here.
+        else if (o == "--run") runs.push_back(argv[a + 1]);
         else break;
         a += 2;
     }
     if (a >= argc) {
         std::fprintf(stderr, "usage: dosemu [--root DIR] [--font-ank F] [--font-kanji F]\n"
                              "              [--dict SKK-JISYO] [--device \"PATH ARGS\"]\n"
+                             "              [--run \"PROG ARGS\"]\n"
                              "              [--script F | --screenshot P --after N] PROGRAM.EXE [args...]\n");
         return 2;
     }
@@ -291,6 +339,26 @@ int main(int argc, char** argv) {
         std::string derr;
         if (!dos.load_device(path, dargs, derr))
             std::fprintf(stderr, "dosemu: %s\n", derr.c_str());
+    }
+
+    // Then the resident programs, in order.
+    for (const std::string& r : runs) {
+        std::string path = r, tail;
+        const size_t sp = r.find_first_of(" \t");
+        if (sp != std::string::npos) { path = r.substr(0, sp); tail = " " + r.substr(sp + 1); }
+        std::vector<uint8_t> rf = read_file(path.c_str());
+        if (rf.empty()) { std::fprintf(stderr, "dosemu: cannot read %s\n", path.c_str()); continue; }
+        std::string rerr, rname = "A:\\" + path.substr(path.find_last_of("/\\") + 1);
+        for (char& c : rname) c = static_cast<char>(std::toupper((unsigned char)c));
+        const uint16_t rpsp = dos.next_psp();
+        if (!load_program(rf, cpu, rpsp, tail, rerr, rname, dos.alloc_env(rname))) {
+            std::fprintf(stderr, "dosemu: %s: %s\n", path.c_str(), rerr.c_str());
+            continue;
+        }
+        dos.psp_seg = rpsp;
+        dos.init_psp(rpsp, rpsp, rname);
+        for (long i = 0; i < 200000000L && !cpu.halted; ++i) cpu.step();
+        cpu.halted = false;
     }
 
     std::string err;
