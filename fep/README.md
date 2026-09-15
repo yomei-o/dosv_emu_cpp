@@ -62,6 +62,25 @@ python ../jwcad_dos_wasm/tools/lzh.py fep/local/wxpj31.lzh fep/local/wxp/
 `-lh1-`（一九八八年の可変ハフマン方式）なので、展開には対のリポジトリの
 `tools/lzh.py` が要ります——そのために書き足しました。13 ファイルすべて CRC 一致。
 
+### いまどこまで動くか
+
+`--device` でデバイスドライバを読めるようになりました（`src/device.cpp`）。
+
+```sh
+./dosemu --root DIR   --device "WXP.SYS /R /Z /H10 /CS /D1A:\JISHO01.DIC /D3A:\JISHO02.DIC"   --device "WXDP.SYS"   --font-ank ... --font-kanji ... JW_CADV.EXE SAMPLE0.JWC
+```
+
+```
+dosemu: WXP.SYS:  installed CON      at 01FC:0000, 7808 paragraphs
+dosemu: WXDP.SYS: installed  AISoft  at 184D:0000, 1197 paragraphs
+```
+
+**一九九〇年の WXP が組み込まれます。** 辞書 65 万バイトを読んで CON になり、
+その上で JW_CAD も普通に立ち上がります。ただしキーはまだ正しく通りません
+——WXP は J-3100 の BIOS を見に行くので、wxpdosv がその橋渡しをする必要が
+あります。そして wxpdosv は「デバイスとして組み込んだ上で、もう一度
+プログラムとして起動してください」というものなので、TSR が要ります。
+
 ### 動かすには何が足りないか
 
 バイナリを読んで分かったこと:
@@ -79,16 +98,15 @@ python ../jwcad_dos_wasm/tools/lzh.py fep/local/wxpj31.lzh fep/local/wxp/
 
 このエミュレータに足りないのは四つ:
 
-1. **CONFIG.SYS のデバイスドライバ読み込み** —— EXE 形式の `.SYS` を読み、
-   STRATEGY と INTERRUPT を INIT パケットで呼び、常駐部分を残してデバイス
-   チェーンに繋ぐ。いまのローダはプログラムしか読めません。
-2. **コンソール入出力を CON チェーン経由にする** —— `INT 21h` の AH=01/06/07/08/0A が
-   いまはホストから直接読んでいます。WXP に届くには、インストールされた CON
-   ドライバへの READ 要求にしなければなりません。
+1. ~~**CONFIG.SYS のデバイスドライバ読み込み**~~ —— できました（`--device`）。
+2. ~~**コンソール入出力を CON チェーン経由にする**~~ —— できました。AH=07h は
+   CON ドライバへの READ 要求になり、AH=0Bh は非破壊読み出しになります。
 3. **DOS/V のテキスト画面** —— 変換窓はテキスト VRAM 側に出ます。`INT 10h AH=1Dh`、
    `AH=85h`、TTY 出力、BIOS ワークの行数桁数。こちらには文字を描く画面が
    まだありません（JW_CAD は一度もテキスト出力を使わないので要らなかった）。
-4. **TSR** —— `wxpdosv.exe` を常駐させる（`INT 21h AH=31h`）か、デバイスとして読む。
+4. **TSR** —— `wxpdosv.exe` を常駐させる（`INT 21h AH=31h`）。デバイスとしても
+   読めますが、それだけでは本人が「組み込まない」と言います（ドキュメントに
+   「autoexec.bat もしくは手動で wxpdosv を再度起動させてください」とある）。
 
 なお JW_CAD の検出テーブルには `FP$WXP` がありますが、この WXP は自分を `CON` と
 名乗るので、その名前では引っかかりません（`FP$WXP` は後の WX 系のものでしょう）。
