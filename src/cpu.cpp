@@ -98,10 +98,40 @@ std::vector<int> Cpu::bp_ptr = [] {
     return v;
 }();
 
+// DOSEMU_BPN=N: how many words of the stack to print (ten by default). A routine
+// that takes a dozen arguments -- a drawing primitive with two doubles and a handful
+// of flags -- runs off the end of the default list, and the argument that decides
+// what it drew is the one that is missing.
+int Cpu::bp_words = [] { const char* s = getenv("DOSEMU_BPN");
+    const int n = s ? atoi(s) : 10;
+    return n < 1 ? 1 : n > 64 ? 64 : n; }();
+
+// A comma-separated list of stack-word indices, for the two below.
+static std::vector<int> bp_list(const char* name) {
+    std::vector<int> v;
+    const char* s = getenv(name);
+    while (s && *s) {
+        char* e = nullptr;
+        const long n = strtol(s, &e, 10);
+        if (e == s) break;
+        v.push_back(static_cast<int>(n));
+        s = (*e == ',') ? e + 1 : e;
+    }
+    return v;
+}
+
+// DOSEMU_BPDBL=N[,N...] and DOSEMU_BPFLT=N[,N...]: read the stack from word N on as an
+// 8-byte double or a 4-byte float and print the number. Microsoft C passes a double
+// *by value*, so the coordinates a routine was handed sit in the argument list as four
+// words of hex -- present, but not readable by a person, and "what number was that" is
+// the entire question a breakpoint here is being asked.
+std::vector<int> Cpu::bp_dbl = [] { return bp_list("DOSEMU_BPDBL"); }();
+std::vector<int> Cpu::bp_flt = [] { return bp_list("DOSEMU_BPFLT"); }();
+
 void Cpu::bp_report() const {
     std::printf("[bp] %04X:%04X after %llu  args", sreg[CS], static_cast<uint16_t>(ip),
                 (unsigned long long)insns);
-    for (int i = 0; i < 10; ++i)
+    for (int i = 0; i < bp_words; ++i)
         std::printf(" %04X", mem_.rw(sreg[SS], static_cast<uint16_t>(r[SP] + i * 2)));
     std::printf("  ds=%04X es=%04X", sreg[DS], sreg[ES]);
     if (bp_str >= 0) {
@@ -123,6 +153,22 @@ void Cpu::bp_report() const {
         else     std::printf("  [%d]->", n);
         for (int i = 0; i < 4; ++i)
             std::printf("%02X", mem_.rb(sreg[DS], static_cast<uint16_t>(o + i)));
+    }
+    for (int n : bp_dbl) {
+        uint8_t b[8];
+        double d;
+        for (int i = 0; i < 8; ++i)
+            b[i] = mem_.rb(sreg[SS], static_cast<uint16_t>(r[SP] + n * 2 + i));
+        std::memcpy(&d, b, sizeof d);
+        std::printf("  d[%d]=%.9g", n, d);
+    }
+    for (int n : bp_flt) {
+        uint8_t b[4];
+        float f;
+        for (int i = 0; i < 4; ++i)
+            b[i] = mem_.rb(sreg[SS], static_cast<uint16_t>(r[SP] + n * 2 + i));
+        std::memcpy(&f, b, sizeof f);
+        std::printf("  f[%d]=%.9g", n, (double)f);
     }
     std::printf("\n");
 }

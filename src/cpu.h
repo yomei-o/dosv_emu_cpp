@@ -293,6 +293,9 @@ public:
     static std::vector<uint32_t> bp_at;
     static int bp_str;          // DOSEMU_BPSTR=N: dump stack word N as a DS-relative string
     static std::vector<int> bp_ptr;   // DOSEMU_BPPTR=N,...: deref those words, 4 bytes each
+    static int bp_words;              // DOSEMU_BPN=N: how many stack words to print
+    static std::vector<int> bp_dbl;   // DOSEMU_BPDBL=N,...: those words as 8087 doubles
+    static std::vector<int> bp_flt;   // DOSEMU_BPFLT=N,...: those words as 4-byte floats
     void bp_report() const;
 
     // ---- x87 ----------------------------------------------------------------
