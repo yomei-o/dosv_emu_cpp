@@ -12,10 +12,17 @@ and the one to hand is SKK's.
 The format, from CONVDIC.C:
 
   smsdic.dic   three bytes per kanji, in reading order:
-                 byte 0  the JIS code's first byte, with bit 7 holding bit 8
-                         of the key position
-                 byte 1  the JIS code's second byte
+                 byte 0  the Shift-JIS lead byte -- but with bit 7 *cleared*
+                         when the key position is 256 or more
+                 byte 1  the Shift-JIS trail byte
                  byte 2  the key position's low eight bits
+
+               The bit is upside down because a Shift-JIS lead byte always has
+               bit 7 set, so there is nothing to store in it: 鳳 reads the pair,
+               keeps the bit, puts the character back together with `or dx,80h`,
+               and takes the complement of what it kept as the position's ninth
+               bit (search_rea2, `not bh / rol bh,1 / and bh,1`). The keyboard
+               holds eight pages of forty, so the position never exceeds 319.
   smsrea.dic   eight words, the address of the *last* reading of each length
                1..8; then the readings themselves, grouped by length, each one
                  reading (length bytes, half-width katakana, one byte a kana)
@@ -64,22 +71,6 @@ def reading_bytes(kana):
     return bytes(out) if 1 <= len(out) <= 8 else None
 
 
-def sjis_to_jis(code):
-    """Shift-JIS to the two seven-bit JIS bytes the dictionary holds."""
-    c1, c2 = code >> 8, code & 0xFF
-    if not (0x81 <= c1 <= 0x9F or 0xE0 <= c1 <= 0xEF):
-        return None
-    row = (c1 - (0x81 if c1 < 0xA0 else 0xC1)) * 2 + 1
-    if c2 >= 0x9F:
-        row += 1
-        cell = c2 - 0x9E
-    else:
-        cell = c2 - (0x3F if c2 < 0x7F else 0x40)
-    if not (1 <= row <= 94 and 1 <= cell <= 94):
-        return None
-    return ((row + 0x20) << 8) | (cell + 0x20)
-
-
 def main(skk, outdir):
     readings = {}                                   # reading bytes -> [jis codes]
     plain = False
@@ -109,11 +100,11 @@ def main(skk, outdir):
                 sj = cand.encode('cp932')
             except UnicodeEncodeError:
                 continue
-            if len(sj) != 2:
+            if len(sj) != 2 or not (0x81 <= sj[0] <= 0x9F or 0xE0 <= sj[0] <= 0xEF):
                 continue
-            jis = sjis_to_jis((sj[0] << 8) | sj[1])
-            if jis and jis not in got:
-                got.append(jis)
+            code = (sj[0] << 8) | sj[1]
+            if code not in got:
+                got.append(code)
         if got:
             readings.setdefault(key, [])
             for j in got:
@@ -122,19 +113,20 @@ def main(skk, outdir):
 
     # The pointer into smsdic.dic is fifteen bits, counted in entries, so the
     # whole dictionary has to fit in 32,767 kanji. Short readings first: they
-    # are the ones a single-kanji FEP is for.
+    # are the ones a single-kanji FEP is for. 鳳 searches a reading's records
+    # with `repe cmpsb`, so within a length they have to be in byte order.
     order = sorted(readings, key=lambda k: (len(k), k))
     dic = bytearray()
     rea = {n: bytearray() for n in range(1, 9)}
     at = 0
     kept = 0
     for key in order:
-        codes = readings[key][:320]
+        codes = readings[key][:320]                 # eight pages of forty
         if at + len(codes) > 32767:
             break
-        for pos, jis in enumerate(codes):
-            b0 = (jis >> 8) | ((pos & 0x100) >> 1)
-            dic += bytes((b0, jis & 0xFF, pos & 0xFF))
+        for pos, code in enumerate(codes):
+            b0 = (code >> 8) & (0x7F if pos >= 256 else 0xFF)
+            dic += bytes((b0, code & 0xFF, pos & 0xFF))
         n = len(codes)
         rea[len(key)] += key + bytes(((at & 0xFF),
                                       ((at >> 8) | ((n & 0x100) >> 1)),

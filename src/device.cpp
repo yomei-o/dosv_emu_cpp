@@ -97,7 +97,7 @@ void Dos::publish_lol() {
 // reach by accident, jump, and step until it gets there". Everything is saved
 // and put back, because this is called from inside the guest's own INT 21h --
 // the console read that the FEP is in the middle of answering.
-bool Dos::call_far(uint16_t seg, uint16_t off, uint16_t es, uint16_t bx) {
+bool Dos::call_far(uint16_t seg, uint16_t off, uint16_t es, uint16_t bx, bool iret) {
     uint16_t r[8], rhi[8], s[6];
     for (int i = 0; i < 8; ++i) { r[i] = cpu_.r[i]; rhi[i] = cpu_.rhi[i]; }
     for (int i = 0; i < 6; ++i) s[i] = cpu_.sreg[i];
@@ -108,6 +108,9 @@ bool Dos::call_far(uint16_t seg, uint16_t off, uint16_t es, uint16_t bx) {
     cpu_.r[BX] = bx;
     cpu_.set_seg(SS, drv_work_);
     cpu_.r[SP] = 0x0F00;                                // a stack of our own
+    // An interrupt handler ends in IRET, which takes a third word off the
+    // stack, so it is given the frame it expects.
+    if (iret) { cpu_.r[SP] -= 2; mem_.ww(drv_work_, cpu_.r[SP], static_cast<uint16_t>(cpu_.flags)); }
     cpu_.r[SP] -= 2; mem_.ww(drv_work_, cpu_.r[SP], kConSeg);
     cpu_.r[SP] -= 2; mem_.ww(drv_work_, cpu_.r[SP], kRetOff);
     cpu_.set_seg(CS, seg);
@@ -131,6 +134,20 @@ bool Dos::call_far(uint16_t seg, uint16_t off, uint16_t es, uint16_t bx) {
     cpu_.ip = ip;
     cpu_.flags = flags;
     return ok;
+}
+
+// The DOS idle interrupt. DOS raises it while a console read has nothing to
+// give, and a resident program does its slow work there rather than inside the
+// interrupt that cannot wait: 鳳 answers SPACE by setting a flag and returning,
+// and it is INT 28h that then looks the reading up and draws the keyboard of
+// kanji to choose from. Without it, SPACE does nothing at all.
+void Dos::dos_idle() {
+    const uint16_t off = mem_.r16(0x28 * 4), seg = mem_.r16(0x28 * 4 + 2);
+    if (seg == kConSeg || (!seg && !off)) return;       // still the default stub
+    if (in_idle_) return;                               // not from inside itself
+    in_idle_ = true;
+    call_far(seg, off, cpu_.sreg[ES], cpu_.r[BX], true);
+    in_idle_ = false;
 }
 
 // One request to whatever is CON now. `pkt` is filled in by the caller at

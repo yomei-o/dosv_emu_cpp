@@ -302,7 +302,9 @@ private:
     std::deque<uint16_t> keys_;
     void install_builtin_con();
     void publish_lol();
-    bool call_far(uint16_t seg, uint16_t off, uint16_t es, uint16_t bx);
+    bool call_far(uint16_t seg, uint16_t off, uint16_t es, uint16_t bx, bool iret = false);
+    void dos_idle();
+    bool in_idle_ = false;
     bool con_request();
     int  con_read();                       // one byte, through the CON driver
     bool con_ready();                      // ...and "is one there?"

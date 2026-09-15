@@ -1277,8 +1277,18 @@ bool Dos::int21() {
         // made it read for ever. On a run with nothing typed into it the screen froze
         // after the first 7 million instructions and never changed again. The honest
         // answer comes from the same hook INT 16h uses; unset, it is no.
+        // Is a character waiting? DOS answers this by asking CON, and when the
+        // answer is no it raises the idle interrupt on the way out -- which is
+        // where a resident program does the work it could not do inside the
+        // keyboard interrupt. JW_CAD asks this before every read, so this is
+        // the only place a FEP under it ever gets to think.
         case 0x0B:
-            if (con_driver_) { cpu_.sb(AX, con_ready() ? 0xFF : 0x00); return true; }
+            if (con_driver_) {
+                const bool ready = con_ready();
+                if (!ready) dos_idle();
+                cpu_.sb(AX, ready ? 0xFF : 0x00);
+                return true;
+            }
             cpu_.sb(AX, keys_waiting() || (input_ready && input_ready()) ? 0xFF : 0x00);
             return true;
         // The InDOS flag. Every resident thing asks for it -- it is how a TSR
