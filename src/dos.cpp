@@ -919,8 +919,19 @@ bool Dos::font_fetch(bool dbcs) {
     const std::vector<uint8_t>& f = dbcs ? font_kanji_ : font_ank_;
     int w = 0, h = 0;
     const uint8_t* g = fontx_glyph(f, cpu_.r[CX], w, h);
-    if (!g) return true;                                      // no glyph: leave the buffer
     const long size = (w + 7) / 8 * h;
+    if (!g) {
+        // No glyph for that code. A real DOS/V driver would hand one back; ours
+        // has only what the FONTX2 file holds, and the Shinonome fonts carry no
+        // NEC row 13 -- the circled digits JW_CAD writes along its top line.
+        // Give back a blank rather than leaving whatever the caller's buffer
+        // held from the last character: stale bytes put a different wrong glyph
+        // on the screen every time, and then a port that draws nothing there
+        // looks wrong for a reason that has nothing to do with the port.
+        for (long i = 0; i < size; ++i)
+            mem_.wb(cpu_.sreg[ES], (uint16_t)(cpu_.r[SI] + i), 0);
+        return true;
+    }
     for (long i = 0; i < size; ++i)
         mem_.wb(cpu_.sreg[ES], (uint16_t)(cpu_.r[SI] + i), g[i]);
     return true;
