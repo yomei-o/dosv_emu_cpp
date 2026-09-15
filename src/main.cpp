@@ -200,6 +200,7 @@ int main(int argc, char** argv) {
     // DOS/V fonts, for INT 15h AX=5000h. A graphics program that draws text
     // asks the display driver for them and has none of its own.
     std::string font_ank, font_kanji, shot, script, dict;
+    std::vector<std::string> devices;
     uint64_t shot_after = 0;
     while (a + 1 < argc) {
         const std::string o = argv[a];
@@ -209,12 +210,15 @@ int main(int argc, char** argv) {
         else if (o == "--after") shot_after = strtoull(argv[a + 1], nullptr, 10);
         else if (o == "--script") script = argv[a + 1];
         else if (o == "--dict") dict = argv[a + 1];
+        // --device "PATH ARGS": a CONFIG.SYS line, minus the DEVICE=. Repeatable,
+        // and loaded in the order given, because drivers chain to each other.
+        else if (o == "--device") devices.push_back(argv[a + 1]);
         else break;
         a += 2;
     }
     if (a >= argc) {
         std::fprintf(stderr, "usage: dosemu [--root DIR] [--font-ank F] [--font-kanji F]\n"
-                             "              [--dict SKK-JISYO]\n"
+                             "              [--dict SKK-JISYO] [--device \"PATH ARGS\"]\n"
                              "              [--script F | --screenshot P --after N] PROGRAM.EXE [args...]\n");
         return 2;
     }
@@ -277,13 +281,26 @@ int main(int argc, char** argv) {
         dos_name = "A:\\" + rel;
     }
 
+    // CONFIG.SYS first. A Japanese FEP is a device driver that takes over CON,
+    // so it has to be resident before the program opens its console -- which is
+    // also why the program is loaded *after* them, wherever they leave room.
+    for (const std::string& d : devices) {
+        std::string path = d, dargs;
+        const size_t sp = d.find_first_of(" \t");
+        if (sp != std::string::npos) { path = d.substr(0, sp); dargs = d.substr(sp + 1); }
+        std::string derr;
+        if (!dos.load_device(path, dargs, derr))
+            std::fprintf(stderr, "dosemu: %s\n", derr.c_str());
+    }
+
     std::string err;
-    if (!load_program(file, cpu, 0x0100, cmdline, err, dos_name, dos.alloc_env(dos_name))) {
+    const uint16_t psp = dos.next_psp();
+    if (!load_program(file, cpu, psp, cmdline, err, dos_name, dos.alloc_env(dos_name))) {
         std::fprintf(stderr, "dosemu: %s\n", err.c_str());
         return 1;
     }
-    dos.psp_seg = 0x0100;
-    dos.init_psp(0x0100, 0x0100, dos_name);   // no real parent; point at itself, as DOS does for the shell
+    dos.psp_seg = psp;
+    dos.init_psp(psp, psp, dos_name);   // no real parent; point at itself, as DOS does for the shell
 
     // A screenshot after a fixed number of instructions. The guest has no
     // window to close and no way to say "now" -- and for comparing screens

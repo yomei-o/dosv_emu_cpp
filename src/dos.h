@@ -17,6 +17,14 @@
 
 namespace dosemu {
 
+// The two interrupts the built-in CON's entry points are made of, and where the
+// DOS list-of-lists is handed out. A device driver is called through far
+// pointers it reads out of a header, so the header needs real addresses in it;
+// these are the addresses.
+static constexpr uint8_t kDevStrat = 0xEC;
+static constexpr uint8_t kDevInt = 0xED;
+static constexpr uint16_t kLolSeg = 0x00F8;
+
 // One glyph out of a FONTX2 file: the first byte of its bitmap, with the cell
 // size. Rows are (w+7)/8 bytes, most significant bit leftmost.
 const uint8_t* fontx_glyph(const std::vector<uint8_t>& f, uint16_t code, int& w, int& h);
@@ -56,6 +64,13 @@ public:
         for (Block& b : blocks_) if (b.seg + 1 == kDpmiEntrySeg) b.owner = 8;
         mem_publish();
         dpmi_.alloc_dos = [this](uint16_t paras) { return mem_alloc(paras); };
+        // Four kilobytes for talking to device drivers: the request packet, the
+        // text of the CONFIG.SYS line, and a stack to call them on. After the
+        // arena exists, not before -- an allocation out of an empty arena
+        // returns segment zero, and then every driver call writes its stack
+        // over the interrupt table.
+        drv_work_ = mem_alloc(0x100);
+        install_builtin_con();
     }
 
     // Guest output (fd 1/2) goes here; defaults to stdout/stderr.
@@ -171,7 +186,13 @@ private:
     // A scripted key comes first; stdin is the fallback. An extended key (no ASCII)
     // reaches a DOS read as two bytes, 0x00 then the scan code -- which is how a
     // program tells F1 from the letter it would otherwise look like.
-    // A console read, with the FEP in the way.
+    // A console read. With a device driver holding CON -- a Japanese FEP is one
+    // -- the byte comes from *it*, which is the whole point: the conversion
+    // happens inside what the application sees as INT 21h AH=07h. Without one,
+    // the built-in console reads the keyboard directly.
+    int  getch() { return con_driver_ ? con_read() : host_getch(); }
+
+    // A console read, with our own FEP in the way.
     //
     // While the FEP is on, keys belong to it: it takes them, runs the
     // conversion, and only what has been confirmed comes out here. That is why
@@ -179,7 +200,7 @@ private:
     // a FEP is exactly the thing that makes it block for a while. With nothing
     // left to read (a script that has run out, EOF on stdin) the loop stops and
     // the read fails, which is what it did before there was a FEP.
-    int  getch() {
+    int  host_getch() {
         for (;;) {
             if (ime_.has_out()) return ime_.pop_out();
             const int k = raw_key();
@@ -230,7 +251,24 @@ public:
     // Keystrokes fed from a script, as the BIOS presents them: scan code in the
     // high byte, ASCII in the low one (0 for the keys that have none). They are
     // read before the `input` callback, so a scripted run needs no stdin at all.
-    void push_key(uint16_t k) { keys_.push_back(k); }
+    void push_key(uint16_t k) { kbd_push(k); }
+    bool kbd_push(uint16_t key);
+    int  kbd_pop(bool take);
+
+    // Device drivers, as CONFIG.SYS loads them. A DOS/V Japanese FEP is one of
+    // these -- a character device that takes over the name CON -- so this is
+    // what it takes to run a real one. See src/device.cpp.
+    struct Device { uint16_t seg, hdr, attr; char name[9]; };
+    bool load_device(const std::string& path, const std::string& args, std::string& err);
+    const std::vector<Device>& devices() const { return devices_; }
+    bool device_int(bool strategy);       // the built-in CON's two entry points
+    // Where the program can be loaded: above whatever the drivers took, which is
+    // the order a real DOS boots in -- CONFIG.SYS first, then the program.
+    uint16_t next_psp() const {
+        if (blocks_.empty()) return 0x0100;
+        const Block& b = blocks_.back();
+        return b.used ? 0x0100 : static_cast<uint16_t>(b.seg + 1);
+    }
 
     // One byte of guest memory, for the script's `dump`.
     uint8_t peek(uint16_t seg, uint16_t off) const { return mem_.rb(seg, off); }
@@ -239,12 +277,24 @@ public:
     bool keys_waiting() {
         pump_ime();
         if (ime_.on()) return ime_.has_out() || pushback_ >= 0;
-        return !keys_.empty() || pending_scan_ >= 0 || pushback_ >= 0;
+        return kbd_pop(false) >= 0 || pending_scan_ >= 0 || pushback_ >= 0;
     }
     Ime& ime() { return ime_; }
 
 private:
     std::deque<uint16_t> keys_;
+    void install_builtin_con();
+    void publish_lol();
+    bool call_far(uint16_t seg, uint16_t off, uint16_t es, uint16_t bx);
+    bool con_request();
+    int  con_read();                       // one byte, through the CON driver
+    bool con_ready();                      // ...and "is one there?"
+    bool con_driver_ = false;              // a loaded driver took the name CON
+    std::vector<Device> devices_;
+    uint16_t con_seg_ = 0, con_hdr_ = 0;   // whatever is CON now
+    uint16_t req_seg_ = 0, req_off_ = 0;   // the packet the last STRATEGY was given
+    uint16_t drv_work_ = 0;                // request packet, argument text and stack
+
     int pending_scan_ = -1;     // DOS hands an extended key over as 0x00 then the scan code
     int pushback_ = -1;         // a key the FEP looked at and did not want
     Ime ime_;

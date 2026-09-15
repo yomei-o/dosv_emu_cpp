@@ -12,7 +12,6 @@ namespace dosemu {
 // Where the DOS list-of-lists is handed out: just above the DPMI host's entry points,
 // which own 0x00E0 through 0x00F7. Both are inside the memory arena and marked as DOS's
 // own, so nothing allocates over them.
-static constexpr uint16_t kLolSeg = 0x00F8;
 
 bool Dos::trace = getenv("DOSEMU_DOS_TRACE") != nullptr;
 
@@ -103,6 +102,43 @@ void Dos::install_bios_data() {
     mem_.wb (0x40, 0x0087, 0x60);     // EGA/VGA info
     mem_.wb (0x40, 0x0088, 0x09);
     mem_.wb (0x40, 0x0089, 0x01);     // VGA flags
+    mem_.ww(0x40, 0x001A, 0x001E);   // keyboard buffer: head,
+    mem_.ww(0x40, 0x001C, 0x001E);   // tail (empty),
+    mem_.ww(0x40, 0x0080, 0x001E);   // and where it starts
+    mem_.ww(0x40, 0x0082, 0x003E);   // ...and ends
+}
+
+// The BIOS keyboard buffer: a sixteen-word ring at 0040:001E, with the head and
+// tail at 0040:001A and 0040:001C.
+//
+// Keys go *here*, not only into a queue of our own, because that is where the
+// machine keeps them and resident software knows it. WXP for J-3100 reads the
+// ring directly rather than calling INT 16h -- a FEP is answering a console read
+// at the time, so calling the BIOS it has hooked would be calling itself -- and
+// with an empty ring it returned a null byte for every key pressed.
+bool Dos::kbd_push(uint16_t key) {
+    const uint16_t start = mem_.rw(0x40, 0x0080), end = mem_.rw(0x40, 0x0082);
+    const uint16_t tail = mem_.rw(0x40, 0x001C);
+    uint16_t next = static_cast<uint16_t>(tail + 2);
+    if (next >= end) next = start;
+    if (next == mem_.rw(0x40, 0x001A)) return false;      // full: the beep case
+    mem_.ww(0x40, tail, key);
+    mem_.ww(0x40, 0x001C, next);
+    return true;
+}
+
+// The next key, or -1. `take` false only looks.
+int Dos::kbd_pop(bool take) {
+    const uint16_t head = mem_.rw(0x40, 0x001A);
+    if (head == mem_.rw(0x40, 0x001C)) return -1;         // empty
+    const uint16_t key = mem_.rw(0x40, head);
+    if (take) {
+        const uint16_t start = mem_.rw(0x40, 0x0080), end = mem_.rw(0x40, 0x0082);
+        uint16_t next = static_cast<uint16_t>(head + 2);
+        if (next >= end) next = start;
+        mem_.ww(0x40, 0x001A, next);
+    }
+    return key;
 }
 
 void Dos::init_psp(uint16_t psp, uint16_t parent, const std::string& path) {
@@ -639,6 +675,24 @@ struct SegAlias {
     }
 };
 
+// Answering an interrupt whose result is in the flags, from inside the stub.
+//
+// A resident program that chains to a BIOS service -- `jmp far [old_int16]` -- has
+// pushed nothing; the frame on the stack is the *caller's*, from its own INT, and
+// the RET at the end of our stub is an IRET that pops those flags back. So a ZF
+// set here would be thrown away between the answer and the asker. The real BIOS
+// has the same problem and the same answer: write the flags into the saved copy.
+// MNfer.sys chains INT 16h AH=11h this way and JW_CAD's key poll reads the result
+// as "a key is waiting" for ever -- it never draws a thing.
+struct StubFlags {
+    Cpu& cpu; Memory& mem; bool in_stub;
+    StubFlags(Cpu& c, Memory& m, bool s) : cpu(c), mem(m), in_stub(s) {}
+    ~StubFlags() {
+        if (in_stub) mem.ww(cpu.sreg[SS], static_cast<uint16_t>(cpu.r[SP] + 4),
+                            static_cast<uint16_t>(cpu.flags));
+    }
+};
+
 bool Dos::handle(uint8_t n) {
     // A protected-mode client that hooked this vector gets it first. Its handler may
     // service the call itself, or translate the arguments and pass it down through the
@@ -659,6 +713,7 @@ bool Dos::handle(uint8_t n) {
         if ((vs || vo) && (vs != kIvtStubSeg || vo != n * 4)) return false;
     }
     SegAlias ads(cpu_, DS, n != 0x31), aes(cpu_, ES, n != 0x31);
+    StubFlags sf(cpu_, mem_, !cpu_.pe() && cpu_.sreg[CS] == kIvtStubSeg);
     switch (n) {
         // A CPU exception, not a service call. Nothing here can handle one, but
         // silently returning would leave the guest running on the garbage that caused
@@ -723,16 +778,18 @@ bool Dos::handle(uint8_t n) {
             if (trace) std::fprintf(stderr, "[int16] ah=%02X at %04X:%08X\n",
                                     ah, cpu_.sreg[CS], cpu_.ip);
             if (ah == 0x00 || ah == 0x10) {              // read a key -> AL=ascii, AH=scancode
-                if (ime_.on()) {                         // the FEP is holding the keyboard
-                    const int c = getch();
+                if (ime_.on()) {                         // our own FEP is holding the keyboard
+                    const int c = host_getch();
                     cpu_.r[AX] = static_cast<uint16_t>(c < 0 ? 0 : ((c ? 0x1C : 0) << 8) | (c & 0xFF));
                     return true;
                 }
-                if (!keys_.empty()) {                    // a scripted key, scan code and all
-                    cpu_.r[AX] = keys_.front(); keys_.pop_front();
-                    return true;
-                }
-                int c = getch(); if (c < 0) c = 0x1A;
+                const int k = kbd_pop(true);
+                if (k >= 0) { cpu_.r[AX] = static_cast<uint16_t>(k); return true; }
+                // host_getch, not getch: this is the BIOS, *below* whatever holds
+                // CON. A FEP reads the keyboard here while it is answering the
+                // console read above it, and going back through CON would be the
+                // driver calling itself.
+                int c = host_getch(); if (c < 0) c = 0x1A;
                 cpu_.r[AX] = (static_cast<uint16_t>(c ? 0x1C : 0) << 8) | (c & 0xFF);
             } else if (ah == 0x01 || ah == 0x11) {       // key available? ZF=1 means no
                 pump_ime();
@@ -741,7 +798,8 @@ bool Dos::handle(uint8_t n) {
                     else cpu_.flags |= ZF;
                     return true;
                 }
-                if (!keys_.empty()) { cpu_.flags &= ~ZF; cpu_.r[AX] = keys_.front(); return true; }
+                const int k = kbd_pop(false);
+                if (k >= 0) { cpu_.flags &= ~ZF; cpu_.r[AX] = static_cast<uint16_t>(k); return true; }
                 // This used to answer "yes, Enter is waiting" unconditionally, which is
                 // the same shape of lie as every other bug on this project: a caller that
                 // believes it then reads the key, and the read blocks on a stdin nobody is
@@ -775,6 +833,8 @@ bool Dos::handle(uint8_t n) {
             return int33();
         case kFontIntAnk: return font_fetch(false);
         case kFontIntKanji: return font_fetch(true);
+        case kDevStrat: return device_int(true);
+        case kDevInt: return device_int(false);
         case 0x1A:                                       // BIOS time
             return true;
         default:
@@ -910,8 +970,9 @@ void Dos::mouse_button(int button, bool down) {
 int Dos::next_key_byte() {
     if (pushback_ >= 0) { const int k = pushback_; pushback_ = -1; return k; }
     if (pending_scan_ >= 0) { const int sc = pending_scan_; pending_scan_ = -1; return sc; }
-    if (keys_.empty()) return -1;
-    const uint16_t k = keys_.front(); keys_.pop_front();
+    const int got = kbd_pop(true);
+    if (got < 0) return -1;
+    const uint16_t k = static_cast<uint16_t>(got);
     if ((k & 0xFF) == 0) { pending_scan_ = k >> 8; return 0; }
     return k & 0xFF;
 }
@@ -1185,8 +1246,18 @@ bool Dos::int21() {
         // made it read for ever. On a run with nothing typed into it the screen froze
         // after the first 7 million instructions and never changed again. The honest
         // answer comes from the same hook INT 16h uses; unset, it is no.
-        case 0x0B: cpu_.sb(AX, keys_waiting() || (input_ready && input_ready()) ? 0xFF : 0x00);
-                   return true;
+        case 0x0B:
+            if (con_driver_) { cpu_.sb(AX, con_ready() ? 0xFF : 0x00); return true; }
+            cpu_.sb(AX, keys_waiting() || (input_ready && input_ready()) ? 0xFF : 0x00);
+            return true;
+        // The InDOS flag. Every resident thing asks for it -- it is how a TSR
+        // knows whether DOS is busy -- and WXP asks during its own INIT. One
+        // byte in the work block, always zero, which is the truth here: nothing
+        // pops out of DOS to run in the background.
+        case 0x34:
+            cpu_.set_seg(ES, drv_work_); cpu_.r[BX] = 0x0300;
+            mem_.wb(drv_work_, 0x0300, 0);
+            return true;
         case 0x0C: return true;                                     // flush + input — ignore
         // Reset drive: flush DOS's write buffers. We write through, so there is nothing
         // to flush and "done" is the truthful answer — but it has to be an *answer*.
@@ -1305,10 +1376,11 @@ bool Dos::int21() {
         // LoL-2 is the other half of that: the first MCB's segment, which is how a
         // program walks the memory arena. It used to say 0xFFFF ("none") because there
         // was no arena to walk; now there is one, and DOS/4GW plans its layout from it.
+        // Rebuilt, not wiped: LoL+0Ch is the pointer to the current CON, and a
+        // FEP reads it during its own INIT to find the console it is replacing.
+        // Zeroing the block here would hand it a null pointer to chain to.
         case 0x52:
-            for (int i = 0; i < 32; ++i) mem_.wb(kLolSeg, i, 0);
-            mem_.ww(kLolSeg, 0x0E, blocks_.empty() ? 0xFFFF : blocks_.front().seg);
-            mem_.wd(kLolSeg, 0x14, 0xFFFFFFFF);      // LoL+4: SFT chain: empty
+            publish_lol();
             cpu_.set_seg(ES, kLolSeg); cpu_.r[BX] = 0x0010;
             return true;
         case 0x29: {                                                // parse filename (DS:SI) into an FCB (ES:DI)
