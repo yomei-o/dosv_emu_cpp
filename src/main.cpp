@@ -63,7 +63,12 @@ uint16_t key_for_char(uint8_t c) {
     return c;                                  // no scan code known; the ASCII still is
 }
 
-struct Step { std::string op, arg; long n = 0; int x = 0, y = 0; };
+struct Step { std::string op, arg; long n = 0; int x = 0, y = 0; bool rel = false; };
+
+// Where the program was loaded, for `dump +seg:off`. A segment out of a disassembly
+// is the same every run; the linear address it lands at is not, because anything
+// loaded below the program (a device driver, say) moves it.
+static uint16_t g_load_seg;
 
 bool key_word(const std::string& name, uint16_t& out) {
     static const struct { const char* n; uint8_t scan, ascii; } kTable[] = {
@@ -126,9 +131,11 @@ std::vector<Step> read_script(const char* path, std::string& err) {
         st.op = s.substr(0, sp);
         st.arg = sp == std::string::npos ? "" : s.substr(s.find_first_not_of(" \t", sp));
         if (st.op == "wait" || st.op == "run") st.n = std::strtol(st.arg.c_str(), nullptr, 10);
-        else if (st.op == "dump") {                          // dump SEG:OFF [count]
+        else if (st.op == "dump") {                          // dump [+]SEG:OFF [count]
             char* e = nullptr;
-            st.x = static_cast<int>(std::strtoul(st.arg.c_str(), &e, 16));
+            const char* a = st.arg.c_str();
+            if (*a == '+') { st.rel = true; ++a; }
+            st.x = static_cast<int>(std::strtoul(a, &e, 16));
             st.y = (e && *e == ':') ? static_cast<int>(std::strtoul(e + 1, &e, 16)) : 0;
             st.n = (e && *e) ? std::strtol(e, nullptr, 10) : 16;
         }
@@ -197,9 +204,10 @@ int run_script(const std::vector<Step>& steps, dosemu::Cpu& cpu, dosemu::Dos& do
             // "what is in this variable right now", which is the question a screen that
             // stayed blank raises -- the drawing loop's clip window is sixteen bytes of
             // DGROUP and reading them settles it in one line.
-            std::fprintf(stderr, "[dump] %04X:%04X", (unsigned)st.x, (unsigned)st.y);
+            const unsigned seg = (unsigned)st.x + (st.rel ? g_load_seg : 0);
+            std::fprintf(stderr, "[dump] %04X:%04X", seg, (unsigned)st.y);
             for (long i = 0; i < st.n; ++i)
-                std::fprintf(stderr, " %02X", dos.peek(static_cast<uint16_t>(st.x),
+                std::fprintf(stderr, " %02X", dos.peek(static_cast<uint16_t>(seg),
                                                        static_cast<uint16_t>(st.y + i)));
             std::fprintf(stderr, "\n");
         } else if (st.op == "end") {
@@ -367,6 +375,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "dosemu: %s\n", err.c_str());
         return 1;
     }
+    g_load_seg = static_cast<uint16_t>(psp + 0x10);
     dos.psp_seg = psp;
     dos.init_psp(psp, psp, dos_name);   // no real parent; point at itself, as DOS does for the shell
 

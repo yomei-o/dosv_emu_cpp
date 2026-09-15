@@ -77,6 +77,10 @@ bool load_program(const std::vector<uint8_t>& f, Cpu& cpu, uint16_t psp_seg,
     Memory& mem = cpu.mem();
     uint16_t load_seg = psp_seg + 0x10;   // program starts 256 bytes (one PSP) above
 
+    // Breakpoints given as `+seg:off` are disassembly addresses; now that the load
+    // base is known they can become real ones. See DOSEMU_BP in src/cpu.cpp.
+    Cpu::bp_rebase(load_seg);
+
     // Clear the upper halves of the 32-bit registers. A freshly loaded program gets
     // 16-bit registers from DOS and nothing defines EAX..EDI above bit 15, so leaving
     // the previous program's values there is a leak — and an invisible one, because no

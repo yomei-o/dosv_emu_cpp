@@ -10,6 +10,7 @@
 // default) every path here behaves exactly as the original 8086 core did. An
 // unhandled opcode stops with its byte and address, the way a new guest is brought
 // up. Not modelled yet: protected mode itself, and the x87 FPU (escapes are no-ops).
+#include <algorithm>
 #include "cpu.h"
 #include <cstdlib>
 #include <cstring>
@@ -27,11 +28,29 @@ uint64_t Cpu::trace_hi = [] { const char* s = getenv("DOSEMU_TRACE");
     const char* d = s ? strchr(s, '-') : nullptr;
     return d ? strtoull(d + 1, nullptr, 10) : 0ull; }();
 
-uint32_t Cpu::watch_lo = [] { const char* s = getenv("DOSEMU_WATCH");
-    return s ? (uint32_t)strtoul(s, nullptr, 16) : 0u; }();
+// One end of DOSEMU_WATCH: a plain linear address, or `+seg:off` for one relative to
+// where the program loads (its DGROUP moves with it, and a variable is easier to name
+// as `+3375:9224` -- the address a disassembly gives -- than as a linear number that
+// changes whenever anything below the program does).
+static uint32_t watch_end(const char* s, uint32_t& rel) {
+    rel = 0;
+    if (!s) return 0;
+    if (*s == '+') {
+        char* e = nullptr;
+        const unsigned long seg = strtoul(s + 1, &e, 16);
+        if (e && *e == ':') {
+            rel = (uint32_t)((seg << 16) | (strtoul(e + 1, nullptr, 16) & 0xFFFF));
+            return 0;
+        }
+    }
+    return (uint32_t)strtoul(s, nullptr, 16);
+}
+
+static uint32_t watch_rel_lo, watch_rel_hi;
+uint32_t Cpu::watch_lo = [] { return watch_end(getenv("DOSEMU_WATCH"), watch_rel_lo); }();
 uint32_t Cpu::watch_hi = [] { const char* s = getenv("DOSEMU_WATCH");
     const char* d = s ? strchr(s, '-') : nullptr;
-    return d ? (uint32_t)strtoul(d + 1, nullptr, 16) : 0u; }();
+    return watch_end(d ? d + 1 : nullptr, watch_rel_hi); }();
 
 // DOSEMU_BP=seg:off[,seg:off...] -- report every arrival at one of these addresses,
 // with the words on the stack above the return address. Sampling says where a guest
@@ -40,21 +59,47 @@ uint32_t Cpu::watch_hi = [] { const char* s = getenv("DOSEMU_WATCH");
 // the screen is wrong, the routine that drew it is known, and what matters is the
 // coordinates it was handed. Addresses are the guest's own CS:IP, so they can be
 // copied straight out of a disassembly (plus the load base).
-std::vector<uint32_t> Cpu::bp_at = [] {
+// A `+` in front of one means the segment is relative to where the program loads:
+// `+0def:23c5` is the address a disassembly of the .EXE gives, and it stays right
+// when something below the program moves the load base.
+static std::vector<uint32_t> bp_parse(bool want_relative) {
     std::vector<uint32_t> v;
     const char* s = getenv("DOSEMU_BP");
     while (s && *s) {
+        const bool rel = *s == '+';
+        if (rel) ++s;
         char* e = nullptr;
         const unsigned long seg = strtoul(s, &e, 16);
         if (e == s || *e != ':') break;
         s = e + 1;
         const unsigned long off = strtoul(s, &e, 16);
         if (e == s) break;
-        v.push_back(static_cast<uint32_t>(seg * 16 + off));
+        if (rel == want_relative)
+            v.push_back(static_cast<uint32_t>(rel ? (seg << 16) | (off & 0xFFFF)
+                                                  : seg * 16 + off));
         s = (*e == ',') ? e + 1 : e;
     }
     return v;
-}();
+}
+
+std::vector<uint32_t> Cpu::bp_at = [] { return bp_parse(false); }();
+std::vector<uint32_t> Cpu::bp_rel = [] { return bp_parse(true); }();
+
+void Cpu::bp_rebase(uint16_t base) {
+    for (uint32_t r : bp_rel) {
+        const uint32_t seg = (r >> 16) + base, off = r & 0xFFFF;
+        const uint32_t at = seg * 16 + off;
+        if (std::find(bp_at.begin(), bp_at.end(), at) == bp_at.end()) bp_at.push_back(at);
+    }
+    if (watch_rel_lo) watch_lo = ((watch_rel_lo >> 16) + base) * 16 + (watch_rel_lo & 0xFFFF);
+    if (watch_rel_hi) watch_hi = ((watch_rel_hi >> 16) + base) * 16 + (watch_rel_hi & 0xFFFF);
+    if (watch_rel_lo || watch_rel_hi)
+        std::fprintf(stderr, "dosemu: watching %05lX-%05lX\n",
+                     (unsigned long)watch_lo, (unsigned long)watch_hi);
+    if (!bp_rel.empty())
+        std::fprintf(stderr, "dosemu: program at %04X:0000; %d relative breakpoint(s)"
+                             " moved there\n", base, (int)bp_rel.size());
+}
 
 // DOSEMU_BPSTR=N: also print the NUL-terminated string at DS:(stack word N). Which
 // word holds it depends on the call (2 for a near call's first argument, 3 for a far

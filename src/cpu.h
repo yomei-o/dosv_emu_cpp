@@ -124,6 +124,8 @@ public:
     // lin() rather than at the ModRM decode because string operations compute their
     // addresses directly, and a `rep movs` is exactly the thing you end up hunting.
     static uint32_t watch_lo, watch_hi;
+    // DOSEMU_WATCH also takes `+seg:off`, relative to where the program loaded, the
+    // same way DOSEMU_BP does; bp_rebase() turns those into real addresses too.
     void watch_hit(uint32_t a, int s, uint32_t off) const;
     void mem_write_hit(uint32_t a) const;
     void bad_sel(int i, uint16_t sel) const;
@@ -291,6 +293,12 @@ public:
     // DOSEMU_BP=seg:off[,...]: report arrivals at these addresses with the stack above
     // the return address, which for a C function is its argument list.
     static std::vector<uint32_t> bp_at;
+    // A breakpoint written `+seg:off` is relative to where the program is loaded, so
+    // an address can be copied straight out of a disassembly and stays right when the
+    // load base moves (a device driver below it is enough to move it). load_program()
+    // calls bp_rebase() with the load segment and these turn into real addresses.
+    static std::vector<uint32_t> bp_rel;
+    static void bp_rebase(uint16_t seg);
     static int bp_str;          // DOSEMU_BPSTR=N: dump stack word N as a DS-relative string
     static std::vector<int> bp_ptr;   // DOSEMU_BPPTR=N,...: deref those words, 4 bytes each
     static int bp_words;              // DOSEMU_BPN=N: how many stack words to print
