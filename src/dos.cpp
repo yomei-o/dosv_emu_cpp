@@ -723,6 +723,11 @@ bool Dos::handle(uint8_t n) {
             if (trace) std::fprintf(stderr, "[int16] ah=%02X at %04X:%08X\n",
                                     ah, cpu_.sreg[CS], cpu_.ip);
             if (ah == 0x00 || ah == 0x10) {              // read a key -> AL=ascii, AH=scancode
+                if (ime_.on()) {                         // the FEP is holding the keyboard
+                    const int c = getch();
+                    cpu_.r[AX] = static_cast<uint16_t>(c < 0 ? 0 : ((c ? 0x1C : 0) << 8) | (c & 0xFF));
+                    return true;
+                }
                 if (!keys_.empty()) {                    // a scripted key, scan code and all
                     cpu_.r[AX] = keys_.front(); keys_.pop_front();
                     return true;
@@ -730,6 +735,12 @@ bool Dos::handle(uint8_t n) {
                 int c = getch(); if (c < 0) c = 0x1A;
                 cpu_.r[AX] = (static_cast<uint16_t>(c ? 0x1C : 0) << 8) | (c & 0xFF);
             } else if (ah == 0x01 || ah == 0x11) {       // key available? ZF=1 means no
+                pump_ime();
+                if (ime_.on()) {
+                    if (ime_.has_out() || pushback_ >= 0) { cpu_.flags &= ~ZF; cpu_.r[AX] = 0x1C0D; }
+                    else cpu_.flags |= ZF;
+                    return true;
+                }
                 if (!keys_.empty()) { cpu_.flags &= ~ZF; cpu_.r[AX] = keys_.front(); return true; }
                 // This used to answer "yes, Enter is waiting" unconditionally, which is
                 // the same shape of lie as every other bug on this project: a caller that
@@ -807,16 +818,16 @@ bool Dos::load_fontx(const std::string& path, std::vector<uint8_t>& out) {
 
 // FONTX2: a 17-byte header, then either 256 images in code order (single byte)
 // or a table of code blocks followed by the images of just the codes present.
-bool Dos::font_fetch(bool dbcs) {
-    static const bool tr = getenv("DOSEMU_FONT_TRACE") != nullptr;
-    if (tr) std::fprintf(stderr, "[font]%s %04X -> %04X:%04X\n", dbcs ? "16" : " 8",
-                         cpu_.r[CX], cpu_.sreg[ES], cpu_.r[SI]);
-    const std::vector<uint8_t>& f = dbcs ? font_kanji_ : font_ank_;
-    if (f.size() < 18) return true;
-    const int w = f[14], h = f[15];
+//
+// The guest asks for a glyph through the font interrupt below; the FEP's own
+// window (src/ime.cpp) draws with the same fonts and the same lookup, which is
+// why this is a free function and not part of that.
+const uint8_t* fontx_glyph(const std::vector<uint8_t>& f, uint16_t code, int& w, int& h) {
+    w = h = 0;
+    if (f.size() < 18) return nullptr;
+    w = f[14]; h = f[15];
     const long size = (w + 7) / 8 * h;
     long at = -1;
-    const uint16_t code = cpu_.r[CX];
     if (!f[16]) {
         if (code < 256) at = 17 + code * size;
     } else {
@@ -829,9 +840,21 @@ bool Dos::font_fetch(bool dbcs) {
             before += hi - lo + 1;
         }
     }
-    if (at < 0 || at + size > (long)f.size()) return true;    // no glyph: leave the buffer
+    if (at < 0 || at + size > (long)f.size()) return nullptr;
+    return f.data() + at;
+}
+
+bool Dos::font_fetch(bool dbcs) {
+    static const bool tr = getenv("DOSEMU_FONT_TRACE") != nullptr;
+    if (tr) std::fprintf(stderr, "[font]%s %04X -> %04X:%04X\n", dbcs ? "16" : " 8",
+                         cpu_.r[CX], cpu_.sreg[ES], cpu_.r[SI]);
+    const std::vector<uint8_t>& f = dbcs ? font_kanji_ : font_ank_;
+    int w = 0, h = 0;
+    const uint8_t* g = fontx_glyph(f, cpu_.r[CX], w, h);
+    if (!g) return true;                                      // no glyph: leave the buffer
+    const long size = (w + 7) / 8 * h;
     for (long i = 0; i < size; ++i)
-        mem_.wb(cpu_.sreg[ES], (uint16_t)(cpu_.r[SI] + i), f[(size_t)(at + i)]);
+        mem_.wb(cpu_.sreg[ES], (uint16_t)(cpu_.r[SI] + i), g[i]);
     return true;
 }
 
@@ -885,6 +908,7 @@ void Dos::mouse_button(int button, bool down) {
 // the BIOS reads whole keys: a key with no ASCII (a function key, an arrow) is handed
 // to a DOS read as 0x00 followed by its scan code.
 int Dos::next_key_byte() {
+    if (pushback_ >= 0) { const int k = pushback_; pushback_ = -1; return k; }
     if (pending_scan_ >= 0) { const int sc = pending_scan_; pending_scan_ = -1; return sc; }
     if (keys_.empty()) return -1;
     const uint16_t k = keys_.front(); keys_.pop_front();

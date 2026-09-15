@@ -153,6 +153,11 @@ int run_script(const std::vector<Step>& steps, dosemu::Cpu& cpu, dosemu::Dos& do
             uint16_t k = 0;
             if (key_word(st.arg, k)) dos.push_key(k);
             else std::fprintf(stderr, "dosemu: script: unknown key '%s'\n", st.arg.c_str());
+        } else if (st.op == "ime") {
+            // The FEP's on/off key, as a script can press it. A real one is
+            // switched with Alt+半角/全角; here it is a word, because a script
+            // is a list of what the user did, not of what the keyboard sent.
+            dos.ime().set_on(st.arg != "off");
         } else if (st.op == "type") {
             for (char c : st.arg) dos.push_key(key_for_char(static_cast<uint8_t>(c)));
         } else if (st.op == "shot") {

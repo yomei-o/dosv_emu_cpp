@@ -44,6 +44,16 @@ public:
     void set_mode(uint8_t mode, int width, int height, int stride);
     bool graphics() const { return width_ > 0; }
 
+    // One pixel, straight into the four planes.
+    //
+    // This is not the guest's path -- Vga::write() is, through the graphics
+    // controller. It is the *host's*: a DOS/V FEP draws its conversion window
+    // through the display driver, which is host code as far as the application
+    // is concerned, and our FEP is host code too. Reading a pixel back is for
+    // putting the screen the way it was when the window closes.
+    void put_pixel(int x, int y, uint8_t colour);
+    uint8_t get_pixel(int x, int y) const;
+
     // One byte per pixel, 0-15, row-major. Returns false in a text mode.
     bool snapshot(unsigned char* out) const;
     bool save_png(const std::string& path) const;

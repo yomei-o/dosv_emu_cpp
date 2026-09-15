@@ -13,8 +13,13 @@
 #include "files.h"
 #include "dpmi.h"
 #include "vga.h"
+#include "ime.h"
 
 namespace dosemu {
+
+// One glyph out of a FONTX2 file: the first byte of its bitmap, with the cell
+// size. Rows are (w+7)/8 bytes, most significant bit leftmost.
+const uint8_t* fontx_glyph(const std::vector<uint8_t>& f, uint16_t code, int& w, int& h);
 
 class Dos {
 public:
@@ -26,6 +31,7 @@ public:
         dpmi_.real_int = [this](uint8_t n) { return handle(n); };
         install_ivt_stubs();
         install_bios_data();
+        ime_.attach(&vga, &font_ank_, &font_kanji_);
         // install_font_stubs() is deliberately not called here; INT 15h does it.
         mem_.mmio_lo = Vga::kBase;
         mem_.mmio_hi = Vga::kEnd;
@@ -165,10 +171,40 @@ private:
     // A scripted key comes first; stdin is the fallback. An extended key (no ASCII)
     // reaches a DOS read as two bytes, 0x00 then the scan code -- which is how a
     // program tells F1 from the letter it would otherwise look like.
+    // A console read, with the FEP in the way.
+    //
+    // While the FEP is on, keys belong to it: it takes them, runs the
+    // conversion, and only what has been confirmed comes out here. That is why
+    // the loop can spin -- a DOS read *blocks* until there is a character, and
+    // a FEP is exactly the thing that makes it block for a while. With nothing
+    // left to read (a script that has run out, EOF on stdin) the loop stops and
+    // the read fails, which is what it did before there was a FEP.
     int  getch() {
+        for (;;) {
+            if (ime_.has_out()) return ime_.pop_out();
+            const int k = raw_key();
+            if (k < 0) return -1;
+            if (!ime_.feed(k)) return k;
+        }
+    }
+    // One key byte, from a script or from stdin, before the FEP sees it.
+    int  raw_key() {
         const int k = next_key_byte();
         if (k >= 0) return k;
         int c = input ? input() : -1; return c == '\n' ? '\r' : c;   // -1 at EOF
+    }
+    // Let the FEP have whatever has been typed, so that a program asking "is a
+    // key ready?" gets the truth. JW_CAD asks that first and only reads when
+    // the answer is yes, so without this the conversion would never run: the
+    // keys would sit in the queue making the answer yes, and every read would
+    // hand them to the FEP and find nothing to return.
+    void pump_ime() {
+        if (!ime_.on()) return;
+        while (!ime_.has_out()) {
+            const int k = next_key_byte();     // scripted keys only: stdin blocks
+            if (k < 0) break;
+            if (!ime_.feed(k)) { pushback_ = k; break; }
+        }
     }
     void install_ivt_stubs();
     void install_bios_data();
@@ -198,11 +234,20 @@ public:
 
     // One byte of guest memory, for the script's `dump`.
     uint8_t peek(uint16_t seg, uint16_t off) const { return mem_.rb(seg, off); }
-    bool keys_waiting() const { return !keys_.empty() || pending_scan_ >= 0; }
+    // "Is there a character to read?" -- with the FEP on, only a confirmed one
+    // counts; the half-typed ones are inside it.
+    bool keys_waiting() {
+        pump_ime();
+        if (ime_.on()) return ime_.has_out() || pushback_ >= 0;
+        return !keys_.empty() || pending_scan_ >= 0 || pushback_ >= 0;
+    }
+    Ime& ime() { return ime_; }
 
 private:
     std::deque<uint16_t> keys_;
     int pending_scan_ = -1;     // DOS hands an extended key over as 0x00 then the scan code
+    int pushback_ = -1;         // a key the FEP looked at and did not want
+    Ime ime_;
     int next_key_byte();
     struct {
         int16_t x = 320, y = 240;            // driver coordinates (virtual, = pixels in 12h)

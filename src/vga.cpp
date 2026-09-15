@@ -101,6 +101,28 @@ void Vga::write(uint32_t lin, uint8_t data) {
     }
 }
 
+// The host's own pixel, bypassing the graphics controller: the four planes get
+// one bit each of the colour, at the bit the x position names.
+void Vga::put_pixel(int x, int y, uint8_t colour) {
+    if (width_ <= 0 || x < 0 || y < 0 || x >= width_ || y >= height_) return;
+    const int off = y * stride_ + (x >> 3);
+    const uint8_t bit = static_cast<uint8_t>(0x80 >> (x & 7));
+    for (int p = 0; p < kPlanes; ++p) {
+        if (colour & (1u << p)) plane_[p][off] |= bit;
+        else                    plane_[p][off] = static_cast<uint8_t>(plane_[p][off] & ~bit);
+    }
+}
+
+uint8_t Vga::get_pixel(int x, int y) const {
+    if (width_ <= 0 || x < 0 || y < 0 || x >= width_ || y >= height_) return 0;
+    const int off = y * stride_ + (x >> 3);
+    const uint8_t bit = static_cast<uint8_t>(0x80 >> (x & 7));
+    uint8_t c = 0;
+    for (int p = 0; p < kPlanes; ++p)
+        if (plane_[p][off] & bit) c |= static_cast<uint8_t>(1u << p);
+    return c;
+}
+
 bool Vga::snapshot(unsigned char* out) const {
     // DOSEMU_VRAM_MAP=1: how much of each plane is set inside the visible page and
     // how much above it. "The screen is blank, so nothing was drawn" is a guess, and
