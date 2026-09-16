@@ -1541,7 +1541,14 @@ bool Dos::int21() {
             std::vector<uint8_t> buf(cnt);
             int n = files_.read(h, buf.data(), cnt);
             if (n < 0) { cpu_.flags |= CF; cpu_.r[AX] = -n; return true; }
-            for (int i = 0; i < n; ++i) mem_.wb(seg, off + i, buf[i]);
+            // The transfer address is physical, not DS:DX with the offset wrapping:
+            // a buffer that starts near the top of its segment simply runs on into the
+            // next paragraph. JW_CAD hands DOS 0x4000 bytes at 4612:CFA2 when it saves a
+            // big drawing, and 12,382 bytes in that crosses 64 KiB — with a 16-bit offset
+            // the rest folded back to 4612:0000 and the file came out with a slab of the
+            // wrong memory in the middle of the entity array.
+            { uint32_t a = Memory::phys(seg, off);
+              for (int i = 0; i < n; ++i) mem_.w8((a + i) & 0xFFFFF, buf[i]); }
             cpu_.r[AX] = n; cpu_.flags &= ~CF; return true;
         }
         case 0x40: {                                                // write (BX handle, CX bytes, DS:DX buf)
@@ -1558,7 +1565,8 @@ bool Dos::int21() {
                 cpu_.r[AX] = cnt; cpu_.flags &= ~CF; return true;
             }
             std::vector<uint8_t> buf(cnt);
-            for (uint16_t i = 0; i < cnt; ++i) buf[i] = mem_.rb(seg, off + i);
+            { uint32_t a = Memory::phys(seg, off);          // physical, see the read above
+              for (uint16_t i = 0; i < cnt; ++i) buf[i] = mem_.r8((a + i) & 0xFFFFF); }
             int n = files_.write(h, buf.data(), cnt);
             if (n < 0) { cpu_.flags |= CF; cpu_.r[AX] = -n; return true; }
             cpu_.r[AX] = n; cpu_.flags &= ~CF; return true;
