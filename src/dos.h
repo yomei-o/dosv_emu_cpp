@@ -272,6 +272,20 @@ public:
     bool kbd_push(uint16_t key);
     int  kbd_pop(bool take);
 
+    // The modifier keys, as the BIOS keeps them at 0040:0017/0018 and reports
+    // them through INT 16h AH=02h and AH=12h.  They are state, not keystrokes:
+    // a program asks "is shift down *now*", and JW_CAD asks constantly -- the
+    // answer decides whether a press in the drawing area is an ordinary point
+    // or one of the three modified reads.  Left unimplemented, AH=12h returned
+    // with AX untouched and JW_CAD read whatever the caller's int86 buffer
+    // happened to hold; the bit that came back set was Ctrl, and every press in
+    // 複写's 「基準 位置」 was taken for a Ctrl-press and refused.
+    //
+    // The bits are the BIOS's own: 0 right shift, 1 left shift, 2 Ctrl, 3 Alt,
+    // 4 Scroll Lock, 5 Num Lock, 6 Caps Lock, 7 Insert.
+    void set_mods(uint8_t flags);
+    uint8_t mods() const { return kbd_flags_; }
+
     // Device drivers, as CONFIG.SYS loads them. A DOS/V Japanese FEP is one of
     // these -- a character device that takes over the name CON -- so this is
     // what it takes to run a real one. See src/device.cpp.
@@ -314,6 +328,8 @@ private:
     uint16_t req_seg_ = 0, req_off_ = 0;   // the packet the last STRATEGY was given
     uint16_t drv_work_ = 0;                // request packet, argument text and stack
 
+    uint8_t kbd_flags_ = 0;     // 0040:0017 -- shift, Ctrl, Alt and the locks
+    uint8_t kbd_flags2_ = 0;    // 0040:0018 -- the extended half (left/right Alt, Ctrl)
     int pending_scan_ = -1;     // DOS hands an extended key over as 0x00 then the scan code
     int pushback_ = -1;         // a key the FEP looked at and did not want
     Ime ime_;

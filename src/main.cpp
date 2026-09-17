@@ -181,6 +181,26 @@ int run_script(const std::vector<Step>& steps, dosemu::Cpu& cpu, dosemu::Dos& do
             uint16_t k = 0;
             if (key_word(st.arg, k)) dos.push_key(k);
             else std::fprintf(stderr, "dosemu: script: unknown key '%s'\n", st.arg.c_str());
+        } else if (st.op == "mods") {
+            // Which modifier keys are held from here on, as INT 16h reports them:
+            // `mods shift`, `mods ctrl`, `mods alt`, several at once with commas,
+            // and `mods none` (or no argument) to let them all go. JW_CAD reads
+            // this on every press, and the three modified reads are the only way
+            // to reach 読取's [SHIFT], [GRPH] and [CTRL] from a script.
+            unsigned m = 0;
+            for (size_t i = 0; i < st.arg.size(); ) {
+                size_t j = st.arg.find_first_of(",+ ", i);
+                if (j == std::string::npos) j = st.arg.size();
+                const std::string w = st.arg.substr(i, j - i);
+                if (w == "shift") m |= 0x02;
+                else if (w == "ctrl") m |= 0x04;
+                else if (w == "alt" || w == "grph") m |= 0x08;
+                else if (w == "rshift") m |= 0x01;
+                else if (!w.empty() && w != "none")
+                    std::fprintf(stderr, "dosemu: script: unknown modifier '%s'\n", w.c_str());
+                i = j + 1;
+            }
+            dos.set_mods(static_cast<uint8_t>(m));
         } else if (st.op == "ime") {
             // The FEP's on/off key, as a script can press it. A real one is
             // switched with Alt+半角/全角; here it is a word, because a script

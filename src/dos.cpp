@@ -822,8 +822,16 @@ bool Dos::handle(uint8_t n) {
                 const bool ready = input_ready && input_ready();
                 if (ready) { cpu_.flags &= ~ZF; cpu_.r[AX] = 0x1C0D; }
                 else       { cpu_.flags |= ZF; }
-            } else if (ah == 0x02) {                     // shift status
-                cpu_.sb(AX, 0);
+            } else if (ah == 0x02 || ah == 0x12) {       // shift status, plain and extended
+                // JW_CAD asks for this between every pair of mouse polls: the
+                // modifier held while the button goes down is what turns a press
+                // into 読取 with [SHIFT], [GRPH] or [CTRL], and 複写's 「基準 位置」
+                // refuses a press that arrives with one held. AH=12h used to fall
+                // through untouched, which handed the guest whatever its own int86
+                // buffer held -- Ctrl, as it happened, on every single press.
+                cpu_.sb(AX, kbd_flags_);
+                if (ah == 0x12) cpu_.r[AX] = static_cast<uint16_t>(
+                    (static_cast<uint16_t>(kbd_flags2_) << 8) | kbd_flags_);
             }
             return true;
         }
@@ -954,6 +962,18 @@ bool Dos::font_fetch(bool dbcs) {
 // the 640x480 pixels one for one, and JW_CAD sets its own range (functions 7
 // and 8) before it ever reads a position, so the range this starts with only
 // has to be sane, not authentic.
+// The modifier keys the guest can ask about at any moment. Kept here *and* in
+// the BIOS data area, because a program is free to read either: INT 16h is the
+// documented way and 0040:0017 is the one every DOS program eventually pokes at.
+void Dos::set_mods(uint8_t flags) {
+    kbd_flags_ = flags;
+    // The extended byte's Ctrl and Alt bits are the "right-hand" ones; with no
+    // way to tell the two sides apart, report neither and leave the locks alone.
+    kbd_flags2_ = 0;
+    mem_.wb(0x0040, 0x0017, kbd_flags_);
+    mem_.wb(0x0040, 0x0018, kbd_flags2_);
+}
+
 void Dos::mouse_move(int16_t x, int16_t y) {
     if (x < mouse_.min_x) x = mouse_.min_x;
     if (x > mouse_.max_x) x = mouse_.max_x;
