@@ -43,6 +43,26 @@ export PATH="/c/prog/tools/w64devkit/bin:$PATH"
 sh build.sh
 ```
 
+### 引き継ぎ（2026-09-18 朝）
+
+**`INT 16h AH=12h`（拡張シフト状態）を answer するようにしました**（`f5da352`）。
+素通りさせていたので AX が呼び出し時のまま帰り、JW_CAD は
+呼び出し側の `union REGS` に残っていた値——Ctrl のビットが立った `0x94`——を
+シフト状態として読んでいました。**対の repo（jwcad_dos_wasm）の測定が
+全部「Ctrl を押しながら」になっていた**のはこれです。向こうの RESUME の
+「引き継ぎ」を先に読んでください。
+
+* `Dos::set_mods()` と BIOS の 0040:0017/0018 を持たせ、`AH=02h`/`AH=12h` を
+  そこから答えます
+* 台本に **`mods shift` / `mods ctrl` / `mods alt`（`grph` も同じ）/ `mods none`**
+  を足しました。読取の修飾キーはここから測れます
+* **建て直しが要ります**: `PATH="/c/prog/tools/w64devkit/bin:$PATH" sh build.sh`
+  （`build.sh` は `g++` を探すだけなので、PATH に w64devkit を入れること）
+
+**次に見るとよさそうなもの**: `INT 33h` のイベントハンドラ（`AH=0Ch`）は
+登録を覚えるだけで**呼んでいません**。JW_CAD は使っていない（関数 0/1/2/3/4/5/7/8/9
+しか呼ばない）ので急ぎませんが、ほかのプログラムでは効きます。
+
 ## いまどこまで
 
 **`JW_CADV.EXE` が起動して、メニューを描いて、マウスとキーに応えて、
