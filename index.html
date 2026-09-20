@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DOS/V エミュレータ — 本物の ＪＷ＿ＣＡＤ が動きます</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; padding: 16px;
+    background: #15171a; color: #d8dbe0;
+    font: 14px/1.7 "Hiragino Kaku Gothic ProN", "Noto Sans JP", Meiryo, system-ui, sans-serif;
+  }
+  main { max-width: 700px; margin: 0 auto; }
+  h1 { font-size: 17px; font-weight: 600; margin: 0 0 4px; }
+  p.lede { margin: 0 0 16px; color: #9aa0a8; }
+  .screen {
+    background: #000; border: 1px solid #2a2e34; border-radius: 4px;
+    display: block; width: 100%; max-width: 640px; height: auto;
+    image-rendering: pixelated; touch-action: none; cursor: crosshair;
+  }
+  /* The field the OS composes Japanese into.  It has to be on the page and
+     focusable for an input method to attach to it, so it is parked off-screen
+     rather than hidden with display:none -- a display:none field takes no
+     keys at all. */
+  #ime { position: absolute; left: -9999px; width: 1px; height: 1px;
+         opacity: 0; padding: 0; border: 0; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0; }
+  select, button {
+    font: inherit; background: #22262c; color: #d8dbe0;
+    border: 1px solid #343a42; border-radius: 4px; padding: 5px 10px;
+  }
+  button:hover, select:hover { background: #2a2f36; }
+  code, .status { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+  .status { color: #7f868f; }
+  pre.console {
+    background: #0e1013; border: 1px solid #2a2e34; border-radius: 4px;
+    padding: 8px; margin: 12px 0 0; white-space: pre-wrap;
+    font-family: ui-monospace, Consolas, monospace; font-size: 12px; color: #9aa0a8;
+  }
+  footer { margin-top: 20px; color: #7f868f; font-size: 12px; }
+  a { color: #7fb2e5; }
+  table { border-collapse: collapse; margin: 8px 0; font-size: 12px; }
+  td, th { border: 1px solid #2a2e34; padding: 3px 8px; text-align: left; }
+</style>
+</head>
+<body>
+<main>
+  <h1>DOS/V エミュレータ — 本物の ＪＷ＿ＣＡＤ が動きます</h1>
+  <p class="lede">
+    ここで動いているのは<strong>移植ではなく、1999 年の実行ファイルそのもの</strong>です。
+    <code>JW_CADV.EXE</code> を 16 ビットの x86 として 1 命令ずつ実行し、DOS と BIOS と
+    VGA とマウスドライバを下から支えています。画面はプログラム自身がプレーンに
+    書いた画素で、フォントも DOS/V と同じように OS（＝このエミュレータ）が渡しています。
+  </p>
+
+  <div class="bar">
+    <select id="pick"></select>
+    <button id="reset">最初から</button>
+    <button id="turbo">はやく回す</button>
+    <span class="status" id="status">読み込み中…</span>
+  </div>
+
+  <canvas id="screen" class="screen" width="640" height="480"></canvas>
+  <!-- 文字 コマンドに日本語を打つための欄。DOS の FEP は使わず、OS の入力
+       メソッドが確定した文字列を Shift-JIS のバイトにして送ります。本物が
+       FEP から受け取っているのも同じ「普通のキー 2 つ」です。 -->
+  <input id="ime" autocomplete="off" autocapitalize="off" spellcheck="false"
+         aria-hidden="true" tabindex="-1">
+
+  <pre class="console" id="console" hidden></pre>
+
+  <footer>
+    <p>
+      左ボタン＝指示、右ボタン＝読取。メニューは画面の左、レイヤは右下。
+      キーボードもそのまま届きます（一文字キー、数字、[Enter]、[BS]、[ESC]、[F1]〜[F10]）。
+      <strong>文字コマンドでは日本語も打てます</strong>——OS の入力メソッドで変換して確定すると、
+      本物がそれを受け取ります。
+    </p>
+    <p>
+      起動に 4000 万命令ほどかかります。「はやく回す」を押すと 1 フレームあたりの
+      命令数を増やしますが、そのぶん反応は粗くなります。
+    </p>
+    <p>
+      対になる移植のほうは
+      <a href="https://yomei-o.github.io/jwcad_dos_wasm/">jwcad_dos_wasm</a>。
+      この 2 つの画面を 1 画素ずつ突き合わせるのが、あちらの検証のやりかたです。
+    </p>
+  </footer>
+</main>
+
+<script>
+const canvas = document.getElementById('screen');
+const ctx = canvas.getContext('2d', { alpha: false });
+const statusEl = document.getElementById('status');
+const consoleEl = document.getElementById('console');
+const pickEl = document.getElementById('pick');
+const imeEl = document.getElementById('ime');
+
+/* The drawings that ship with JW_CAD, in the order its own file list has them. */
+const DRAWINGS = ['SAMPLE0', 'SAMPLE1', 'SAMPLE2', 'SAMPLE3', 'SAMPLE4',
+                  'SAMPLE5', 'SAMPLE6', 'TEST1', 'TEST2', 'TEST3', 'TEST4',
+                  'TEST5', 'TEST6', 'TEST7'];
+for (const d of DRAWINGS) {
+  const o = document.createElement('option');
+  o.value = d + '.JWC';
+  o.textContent = d + '.JWC';
+  pickEl.append(o);
+}
+
+/* The emulator runs in a worker.  It has to run *continuously* -- the guest is
+   a real program waiting on its own loops, and a slice small enough to keep a
+   page responsive is too small to get it anywhere.  So the worker owns the
+   clock and posts the screen when it changes; the page only forwards input. */
+const worker = new Worker('dosemu-worker.js');
+const image = ctx.createImageData(640, 480);
+let started = 0, lastInsns = 0, lastAt = 0;
+
+worker.onmessage = e => {
+  const m = e.data;
+  if (m.frame) {
+    if (canvas.width !== m.width || canvas.height !== m.height) {
+      canvas.width = m.width; canvas.height = m.height;
+    }
+    const img = new ImageData(new Uint8ClampedArray(m.frame), m.width, m.height);
+    ctx.putImageData(img, 0, 0);
+  }
+  if (m.insns !== undefined) {
+    const now = performance.now();
+    if (lastAt && now > lastAt) {
+      const rate = (m.insns - lastInsns) / (now - lastAt) * 1000;
+      statusEl.textContent =
+        (m.booted ? '' : '起動中… ') +
+        (m.insns / 1e6).toFixed(1) + ' 百万命令  ' +
+        (rate / 1e6).toFixed(1) + ' 百万命令/秒' +
+        (m.message ? '  — ' + m.message : '');
+    }
+    lastInsns = m.insns; lastAt = now;
+  }
+  if (m.console !== undefined) {
+    consoleEl.hidden = !m.console;
+    consoleEl.textContent = m.console;
+  }
+};
+
+function boot() {
+  lastInsns = 0; lastAt = 0;
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  worker.postMessage({ boot: pickEl.value });
+}
+pickEl.addEventListener('change', boot);
+document.getElementById('reset').addEventListener('click', boot);
+const turboEl = document.getElementById('turbo');
+let turbo = false;
+turboEl.addEventListener('click', () => {
+  turbo = !turbo;
+  turboEl.textContent = turbo ? 'ふつうに回す' : 'はやく回す';
+  worker.postMessage({ turbo });
+});
+boot();
+
+/* Where a pointer event lands on the guest's 640x480, whatever the canvas has
+   been scaled to. */
+function at(e) {
+  const r = canvas.getBoundingClientRect();
+  return [Math.round((e.clientX - r.left) / r.width * canvas.width),
+          Math.round((e.clientY - r.top) / r.height * canvas.height)];
+}
+
+const mods = e => (e.shiftKey ? 2 : 0) | (e.ctrlKey ? 4 : 0) | (e.altKey ? 8 : 0);
+
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+canvas.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  const p = at(e);
+  canvas.setPointerCapture(e.pointerId);
+  worker.postMessage({ mods: mods(e), mouse: p, button: e.button === 2 ? 1 : 0, down: 1 });
+});
+canvas.addEventListener('pointermove', e => {
+  worker.postMessage({ mods: mods(e), mouse: at(e) });
+});
+for (const ev of ['pointerup', 'pointercancel']) {
+  canvas.addEventListener(ev, e => {
+    worker.postMessage({ mouse: at(e), button: e.button === 2 ? 1 : 0, down: 0 });
+  });
+}
+
+/* Keys, as the BIOS hands them over: scan code in the high byte, ASCII in the
+   low one.  The scan codes are the ones a DOS program tests for -- JW_CAD
+   reads the function keys and the cursor keys by scan code and everything else
+   by its character. */
+const SCAN = {
+  Enter: 0x1C, Escape: 0x01, Backspace: 0x0E, Tab: 0x0F, ' ': 0x39,
+  ArrowUp: 0x48, ArrowDown: 0x50, ArrowLeft: 0x4B, ArrowRight: 0x4D,
+  Home: 0x47, End: 0x4F, PageUp: 0x49, PageDown: 0x51,
+  Insert: 0x52, Delete: 0x53,
+};
+const CHAR = { Enter: 13, Escape: 27, Backspace: 8, Tab: 9, ' ': 32 };
+function keyWord(e) {
+  if (/^F([1-9]|1[0-2])$/.test(e.key)) return (0x3A + +e.key.slice(1)) << 8;
+  if (e.key in SCAN) return (SCAN[e.key] << 8) | (CHAR[e.key] || 0);
+  if (e.key.length === 1) return e.key.charCodeAt(0) & 0xff;
+  return 0;
+}
+
+/* Unicode to Shift-JIS, built by inverting the browser's own decoder: there is
+   a TextDecoder for shift-jis but no TextEncoder, and a table of our own would
+   be a second source of truth to get wrong. */
+const SJIS = new TextDecoder('shift-jis');
+const TO_SJIS = (() => {
+  const m = new Map();
+  const one = new Uint8Array(1), two = new Uint8Array(2);
+  for (let b = 0x20; b < 0x80; b++) { one[0] = b; m.set(SJIS.decode(one), [b]); }
+  for (let b = 0xa1; b <= 0xdf; b++) { one[0] = b; m.set(SJIS.decode(one), [b]); }
+  for (let hi = 0x81; hi <= 0xfc; hi++) {
+    if (hi > 0x9f && hi < 0xe0) continue;
+    for (let lo = 0x40; lo <= 0xfc; lo++) {
+      if (lo === 0x7f) continue;
+      two[0] = hi; two[1] = lo;
+      const c = SJIS.decode(two);
+      if (c.length === 1 && c !== '�' && !m.has(c)) m.set(c, [hi, lo]);
+    }
+  }
+  return m;
+})();
+
+/* A committed string goes in as the bytes a DOS/V front-end processor would
+   have delivered -- two ordinary keys for a double-byte character, and no gap
+   between them (the program throws the second away if one arrives late). */
+function typeString(str) {
+  const keys = [];
+  for (const ch of str) {
+    const b = TO_SJIS.get(ch);
+    if (!b) continue;
+    for (const byte of b) keys.push(byte);
+  }
+  if (keys.length) worker.postMessage({ keys });
+}
+
+let composing = false;
+imeEl.addEventListener('compositionstart', () => { composing = true; });
+imeEl.addEventListener('compositionend', e => {
+  composing = false; imeEl.value = ''; typeString(e.data || '');
+});
+imeEl.addEventListener('input', e => {
+  if (composing || e.isComposing) return;
+  const v = imeEl.value; imeEl.value = ''; typeString(v);
+});
+
+/* The hidden field keeps the keyboard so that an input method can attach to
+   it, and everything that is not a composed character is forwarded by hand. */
+window.addEventListener('keydown', e => {
+  if (e.ctrlKey && (e.key === 'r' || e.key === 'R')) return;   // leave reload alone
+  if (composing || e.isComposing) return;
+  const w = keyWord(e);
+  if (!w) return;
+  e.preventDefault();
+  worker.postMessage({ mods: mods(e), keys: [w] });
+});
+for (const ev of ['keydown', 'keyup']) {
+  window.addEventListener(ev, e => worker.postMessage({ mods: mods(e) }));
+}
+canvas.addEventListener('pointerdown', () => imeEl.focus({ preventScroll: true }));
+imeEl.focus({ preventScroll: true });
+</script>
+</body>
+</html>

@@ -62,6 +62,10 @@ public:
     // screens are compared with cmp(1), so the format has to be the port's, not a
     // convenient one.
     bool save_raw(const std::string& path) const;
+    // The same RGBA, straight into a caller's buffer of width*height*4 bytes.
+    // The browser front end (src/main_wasm.cpp) blits it into a canvas every
+    // frame, and writing it to a file first would be silly there.
+    bool rgba(unsigned char* out) const;
 
     int width() const { return width_; }
     int height() const { return height_; }

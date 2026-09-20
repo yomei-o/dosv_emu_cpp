@@ -212,6 +212,21 @@ bool Vga::save_raw(const std::string& path) const {
     return true;
 }
 
+bool Vga::rgba(unsigned char* out) const {
+    if (width_ <= 0 || height_ <= 0 || !out) return false;
+    std::vector<unsigned char> px(static_cast<size_t>(width_) * height_);
+    if (!snapshot(px.data())) return false;
+    size_t i = 0;
+    for (unsigned char p : px) {
+        const uint8_t* d = dac_[pal_[p & 15]];
+        out[i++] = dac8(d[0]);
+        out[i++] = dac8(d[1]);
+        out[i++] = dac8(d[2]);
+        out[i++] = 255;
+    }
+    return true;
+}
+
 bool Vga::save_png(const std::string& path) const {
     if (width_ <= 0 || height_ <= 0) return false;
     std::vector<unsigned char> px(static_cast<size_t>(width_) * height_);
