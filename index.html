@@ -113,8 +113,7 @@ for (const d of DRAWINGS) {
    page responsive is too small to get it anywhere.  So the worker owns the
    clock and posts the screen when it changes; the page only forwards input. */
 const worker = new Worker('dosemu-worker.js');
-const image = ctx.createImageData(640, 480);
-let started = 0, lastInsns = 0, lastAt = 0;
+let lastInsns = 0, lastAt = 0;
 
 worker.onmessage = e => {
   const m = e.data;
