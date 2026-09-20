@@ -17,7 +17,10 @@
   .screen {
     background: #000; border: 1px solid #2a2e34; border-radius: 4px;
     display: block; width: 100%; max-width: 640px; height: auto;
-    image-rendering: pixelated; touch-action: none; cursor: crosshair;
+    image-rendering: pixelated; touch-action: none;
+    /* The guest draws its own arrow; the browser's would sit on top of
+       it and make two. */
+    cursor: none;
   }
   /* The field the OS composes Japanese into.  It has to be on the page and
      focusable for an input method to attach to it, so it is parked off-screen
