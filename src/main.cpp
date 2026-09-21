@@ -212,10 +212,20 @@ int run_script(const std::vector<Step>& steps, dosemu::Cpu& cpu, dosemu::Dos& do
             // .raw writes RGBA instead: the format the port's own screenshots use,
             // so the two can be compared with cmp(1) and nothing in between.
             const bool raw = st.arg.size() > 4 && st.arg.compare(st.arg.size() - 4, 4, ".raw") == 0;
-            if (raw ? dos.vga.save_raw(st.arg) : dos.vga.save_png(st.arg))
+            if (raw ? dos.vga.save_raw(st.arg) : dos.vga.save_png(st.arg)) {
                 std::fprintf(stderr, "dosemu: wrote %s  %dx%d  after %llu instructions\n",
                              st.arg.c_str(), dos.vga.width(), dos.vga.height(),
                              (unsigned long long)cpu.insns);
+                // **And the same on stdout**, which is where the tracing goes.
+                // stderr is unbuffered and stdout is not, so a script that
+                // merges the two with `2>&1` gets the marker ahead of writes
+                // that happened before it -- and a reader cutting the log into
+                // runs then files the words under the wrong one.  This line is
+                // in the same buffer as the writes, so it is in the right
+                // place among them.
+                std::printf("[shot] %s after %llu\n", st.arg.c_str(),
+                            (unsigned long long)cpu.insns);
+            }
             else
                 std::fprintf(stderr, "dosemu: no graphics screen to save (%s)\n", st.arg.c_str());
         } else if (st.op == "dump") {

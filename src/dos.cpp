@@ -5,6 +5,8 @@
 #include <vector>
 #include <string>
 #include <cctype>
+#include <chrono>
+#include <ctime>
 #include <filesystem>
 
 namespace dosemu {
@@ -70,10 +72,43 @@ void Dos::install_ivt_stubs() {
     }
 }
 
-// One timestamp for every file. Not a real mtime, but the *same* answer from
-// FindFirst and from get-file-time, so a program that cross-checks them agrees.
+// A file's own date and time, in the two words DOS keeps them in.
+//
+// **These used to be one constant for every file.** That is a lie a guest can
+// see: JW_CAD's 入出力 → ①ﾌｧｲﾙ → ②読込 lists every drawing with its date, and
+// with a constant they all read 93/08/19 12:00. It also made the list
+// impossible to compare with the port's, which shows the real one -- 265
+// pixels of difference that were nothing to do with either program.
+//
+// A file with no date the host will admit to keeps the old constant, so a
+// missing stat cannot make the answer wander.
 static constexpr uint16_t kFixedDate = ((1993 - 1980) << 9) | (8 << 5) | 19;
 static constexpr uint16_t kFixedTime = (12 << 11);
+
+static void host_stamp(const std::filesystem::path& p,
+                       uint16_t& date, uint16_t& time) {
+    date = kFixedDate;
+    time = kFixedTime;
+    std::error_code ec;
+    const auto ft = std::filesystem::last_write_time(p, ec);
+    if (ec) return;
+    // file_clock -> system_clock -> time_t. C++17 has no portable cast, so
+    // the difference between the two epochs is taken from `now` on both.
+    const auto sys = std::chrono::system_clock::now()
+        + (ft - std::filesystem::file_time_type::clock::now());
+    const std::time_t t = std::chrono::system_clock::to_time_t(sys);
+    std::tm tm{};
+#ifdef _WIN32
+    if (localtime_s(&tm, &t) != 0) return;
+#else
+    if (!localtime_r(&t, &tm)) return;
+#endif
+    if (tm.tm_year + 1900 < 1980 || tm.tm_year + 1900 > 2107) return;
+    date = static_cast<uint16_t>(((tm.tm_year + 1900 - 1980) << 9)
+                                 | ((tm.tm_mon + 1) << 5) | tm.tm_mday);
+    time = static_cast<uint16_t>((tm.tm_hour << 11) | (tm.tm_min << 5)
+                                 | (tm.tm_sec / 2));
+}
 
 bool load_program(const std::vector<uint8_t>&, Cpu&, uint16_t, const std::string&, std::string&, const std::string&, uint16_t);
 std::vector<uint8_t> make_default_env(const std::string& dos_name);
@@ -630,7 +665,7 @@ bool Dos::find_first(const std::string& spec, uint16_t attr) {
         if (!dos83match(pat, dosname)) continue;
         Found f; f.name = dosname; f.is_dir = is_dir;
         f.size = is_dir ? 0 : (uint32_t)e.file_size(ec);
-        f.date = date; f.time = time;
+        host_stamp(e.path(), f.date, f.time);
         find_.push_back(f);
     }
     return !find_.empty();
@@ -1545,6 +1580,9 @@ bool Dos::int21() {
             return true;
         }
         case 0x3C: {                                                // create file (CX attr, DS:DX name) -> handle
+            if (file_trace)
+                std::fprintf(stderr, "[file] create %s\n",
+                             read_asciiz(cpu_.sreg[DS], cpu_.r[DX]).c_str());
             int h = files_.create(read_asciiz(cpu_.sreg[DS], cpu_.r[DX]), cpu_.r[CX]);
             if (h < 0) { cpu_.flags |= CF; cpu_.r[AX] = -h; } else { cpu_.flags &= ~CF; cpu_.r[AX] = h; }
             return true;
