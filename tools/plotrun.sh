@@ -16,7 +16,10 @@ set -e
 cd "$(dirname "$0")/.."
 ORIG="${ORIG:-../jwcad_dos_wasm/orig}"
 FONT="${FONT:-../jwcad_dos_wasm/font}"
-DRAWING="${DRAWING:-SAMPLE0}"
+DRAWING="${DRAWING-SAMPLE0}"
+# DRAWING= (empty) starts the program with no drawing, the way the page does.
+ARG=""
+[ -n "$DRAWING" ] && ARG="$DRAWING.JWC"
 BOOT="${BOOT:-40000000}"
 WAIT="${WAIT:-26000000}"
 STEPS="${STEPS:-99}"
@@ -77,7 +80,7 @@ DOSEMU_CLOCK="${DOSEMU_CLOCK:-20000}" \
 DOSEMU_BP='+0DEF:23C5' DOSEMU_BPSTR=2 DOSEMU_BPN=20000 \
     ./dosemu.exe --root tmp/proot --font-ank "$FONT/JWANK16.FNT" \
     --font-kanji "$FONT/JWKAN16.FNT" \
-    --script tmp/plot/script.txt tmp/proot/JW_CADV.EXE "$DRAWING.JWC" \
+    --script tmp/plot/script.txt tmp/proot/JW_CADV.EXE $ARG \
     > tmp/plot/str.txt 2>&1 || true
 
 grep '\[bp\]' tmp/plot/str.txt \

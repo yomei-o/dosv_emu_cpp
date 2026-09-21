@@ -15,7 +15,18 @@
  * booted on it, and a file the guest wrote is read back out.  Nothing else
  * would do: the program opens and saves through DOS, and DOS is this.
  */
-importScripts('dosemu.js');
+/* The stamp the page put on this file's own URL, passed on to the two it
+   loads -- otherwise a new worker would pull an old .js and .wasm. */
+const DE_BUILD = (() => {
+  /* `self` is the worker's own global; the checks run this file in node,
+     where there is none, so it falls back to no stamp. */
+  try {
+    return (self.location.search.match(/[?&]v=([^&]*)/) || [])[1] || '0';
+  } catch (err) {
+    return '0';
+  }
+})();
+importScripts(DE_BUILD === '0' ? 'dosemu.js' : 'dosemu.js?v=' + DE_BUILD);
 
 const ROOT = 'orig';
 
@@ -241,7 +252,12 @@ onmessage = e => {
   queue.push(m);
 };
 
-createDosemu().then(mod => {
+/* The .wasm is fetched by dosemu.js, by name, so it wants the stamp too. */
+createDosemu({
+  /* Only in a browser: under node there is no stamp and no cache, and
+     `dosemu.wasm?v=0` is a file name that does not exist. */
+  locateFile: (f) => (DE_BUILD === '0' ? f : f + '?v=' + DE_BUILD),
+}).then(mod => {
   Module = mod;
   boot(pendingBoot);
   /* The list goes up before the guest has drawn anything: if it refuses to

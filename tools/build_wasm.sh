@@ -84,4 +84,12 @@ if [ ! -f dosemu.wasm ] || [ ! dosemu.wasm -nt "$STAMP" ]; then
     echo "emcc did not rewrite dosemu.wasm - the build failed" >&2
     exit 1
 fi
+# **The stamp the page puts on the file names.**  Without it a browser that
+# has read dosemu-worker.js, dosemu.js and dosemu.wasm once keeps using them,
+# and a push changes nothing for anyone who has been to the page before.
+BUILD=$(date +%Y%m%d%H%M%S)
+sed -i "s/const DE_BUILD = '[^']*'/const DE_BUILD = '$BUILD'/" index.html
+grep -q "DE_BUILD = '$BUILD'" index.html || {
+    echo "the build stamp did not go into index.html" >&2; exit 1; }
+
 echo "built dosemu.js + dosemu.wasm"

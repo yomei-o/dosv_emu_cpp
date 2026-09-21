@@ -173,7 +173,14 @@ const imeEl = document.getElementById('ime');
    page responsive is too small to get it anywhere.  So the worker owns the
    clock and posts the screen when it changes; the page only forwards input.
    It owns the guest's disk too, which is what upload and download talk to. */
-const worker = new Worker('dosemu-worker.js');
+/* **The version goes on the file names.**  dosemu-worker.js, dosemu.js and
+   dosemu.wasm keep their names from one build to the next, so a browser that
+   has read them once does not go and look again -- a push lands and the page
+   is still the old one, which is what happened on 2026-09-21.  The stamp is
+   written by tools/build_wasm.sh on every build, and the worker passes it on
+   to the two files it loads. */
+const DE_BUILD = '20260921234246';
+const worker = new Worker('dosemu-worker.js?v=' + DE_BUILD);
 /* tools/barcheck.mjs drives the page headlessly and needs the one object
    the whole script hangs off. */
 globalThis.__worker = worker;
