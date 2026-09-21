@@ -182,6 +182,31 @@ function setFiles(files) {
 
 function say(text) { statusEl.textContent = text; }
 
+/* Hand the visitor a file.
+ *
+ * Two things here are not optional, and both were wrong until 2026-09-21:
+ *
+ *   the <a> has to be **in the document**.  Clicking a detached one does
+ *   nothing at all in some browsers, so the button appeared dead.
+ *
+ *   the object URL must **not** be revoked in the same turn as the click.
+ *   The browser has not started reading the blob yet, and revoking cancels
+ *   the download.  It happens to work where the read wins the race, which
+ *   is the worst kind of bug: it works on the machine it was written on.
+ */
+function handOver(name, bytes) {
+  const url = URL.createObjectURL(
+    new Blob([bytes], { type: 'application/octet-stream' }));
+  const a = document.createElement('a');
+
+  a.href = url;
+  a.download = name;
+  a.style.display = 'none';
+  document.body.append(a);
+  a.click();
+  setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 10000);
+}
+
 worker.onmessage = e => {
   const m = e.data;
   if (m.frame) {
@@ -204,12 +229,7 @@ worker.onmessage = e => {
     return;
   }
   if (m.file) {
-    const url = URL.createObjectURL(
-      new Blob([m.file.buf], { type: 'application/octet-stream' }));
-    const a = document.createElement('a');
-    a.href = url; a.download = m.file.name;
-    a.click();
-    URL.revokeObjectURL(url);
+    handOver(m.file.name, m.file.buf);
     say(m.file.name + ' を保存しました');
     return;
   }

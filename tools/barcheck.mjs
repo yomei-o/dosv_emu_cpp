@@ -26,6 +26,7 @@ const script = html.slice(html.indexOf('<script>') + 8,
 const posted = [];
 const listeners = new Map();
 
+const anchors = [];
 function el(id) {
   const o = {
     id, value: '', textContent: '', disabled: false, hidden: false,
@@ -47,10 +48,17 @@ const els = {};
 for (const id of ['screen', 'status', 'console', 'pick', 'up', 'down', 'ime']) {
   els[id] = el(id);
 }
+const body = { children: [], append(a) { this.children.push(a); } };
 const doc = {
   activeElement: null,
+  body,
   getElementById: id => els[id],
-  createElement: () => ({ value: '', textContent: '' }),
+  createElement: tag => {
+    const a = { tag, style: {}, clicked: 0, href: '', download: '',
+                click() { this.clicked++; }, remove() { a.removed = true; } };
+    if (tag === 'a') anchors.push(a);
+    return a;
+  },
   addEventListener() {},
 };
 globalThis.document = doc;
@@ -58,7 +66,11 @@ globalThis.window = { addEventListener() {} };
 globalThis.ImageData = class { constructor() {} };
 globalThis.TextDecoder = class { decode() { return '�'; } };
 globalThis.performance = { now: () => Date.now() };
-globalThis.URL = { createObjectURL: () => 'blob:x', revokeObjectURL() {} };
+let revoked = 0;
+globalThis.URL = {
+  createObjectURL: () => 'blob:x',
+  revokeObjectURL() { revoked++; },
+};
 globalThis.Blob = class { constructor() {} };
 globalThis.Worker = class {
   constructor() { this.onmessage = null; }
@@ -116,5 +128,22 @@ await new Promise(r => setTimeout(r, 10));
 ok(posted.some(m => m.upload && m.upload[0].name === 'OTHER.JWC'),
    'アップロード sends the bytes under a name DOS can spell');
 ok(!posted.some(m => m.boot), 'and does not boot either');
+
+/* The download itself.  Both of these were wrong once and neither shows up
+   on the machine it was written on: a detached <a> does not download in
+   every browser, and revoking the object URL in the same turn as the click
+   cancels the download where the browser has not started reading yet. */
+posted.length = 0;
+anchors.length = 0;
+revoked = 0;
+worker.onmessage({ data: { file: { name: 'MYWORK.JWC', buf: new ArrayBuffer(8) } } });
+ok(anchors.length === 1 && anchors[0].download === 'MYWORK.JWC',
+   'the download makes an <a download="the name">');
+ok(body.children.length === 1 && body.children[0] === anchors[0],
+   'and puts it in the document before clicking (a detached one does nothing)');
+ok(anchors[0].clicked === 1, 'and clicks it');
+ok(revoked === 0, 'and does NOT revoke the object URL in the same turn');
+await new Promise(r => setTimeout(r, 30));
+ok(revoked === 0, 'nor a moment later -- the browser is still reading it');
 
 process.exit(bad ? 1 : 0);
