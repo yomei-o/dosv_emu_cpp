@@ -78,6 +78,8 @@
       <label for="pick">エミュレータの中</label>
       <select id="pick"></select>
       <button id="down" disabled>ダウンロード</button>
+      <button id="pdf" disabled>PDF</button>
+      <button id="png" disabled>PNG</button>
     </span>
     <span class="status" id="status">読み込み中…</span>
   </div>
@@ -128,6 +130,8 @@ const consoleEl = document.getElementById('console');
 const pickEl = document.getElementById('pick');
 const upEl = document.getElementById('up');
 const downEl = document.getElementById('down');
+const pdfEl = document.getElementById('pdf');
+const pngEl = document.getElementById('png');
 const imeEl = document.getElementById('ime');
 
 /* The emulator runs in a worker.  It has to run *continuously* -- the guest is
@@ -228,6 +232,11 @@ worker.onmessage = e => {
         + 'JW_CAD の 入出力 → ①ファイル → ②読込 で開けます');
     return;
   }
+  if (m.file && m.file.as) {
+    /* A plotter file on its way to being a PDF or a PNG (plot.js). */
+    plotOut(m.file);
+    return;
+  }
   if (m.file) {
     handOver(m.file.name, m.file.buf);
     say(m.file.name + ' を保存しました');
@@ -256,7 +265,14 @@ function toGuest() { imeEl.focus({ preventScroll: true }); }
 pickEl.addEventListener('pointerdown', () => worker.postMessage({ list: 1 }));
 /* Choosing is only choosing.  **The page never opens a drawing**: the
    program's own 入出力 does that, without losing what is on the screen. */
-pickEl.addEventListener('change', () => { downEl.disabled = !pickEl.value; });
+pickEl.addEventListener('change', () => {
+  downEl.disabled = !pickEl.value;
+  /* The two plotter buttons only mean anything for what ③ﾌｧｲﾙ出力 left. */
+  const plot = /\.PLT$/i.test(pickEl.value || '');
+
+  pdfEl.disabled = !plot;
+  pngEl.disabled = !plot;
+});
 
 upEl.addEventListener('change', async () => {
   const files = [];
@@ -271,6 +287,39 @@ upEl.addEventListener('change', async () => {
     say('読み込んでいます…');
     worker.postMessage({ upload: files }, files.map(f => f.buf));
   }
+  toGuest();
+});
+
+/* プロッタ出力 -- JW_CAD's own 入出力 → ②ﾌﾟﾛｯﾀ → ③ﾌｧｲﾙ出力 writes a plot
+   through a `*.JWP` definition.  plot/WASM.JWP is one of our own and makes it
+   write plain lines instead of a plotter's language, so the page can turn
+   what it left on the guest's disk into a PDF or a PNG (plot.js). */
+async function plotOut(file) {
+  const { parsePlot, plotPdf, plotPng } = await import('./plot.js');
+  const items = parsePlot(new Uint8Array(file.buf));
+
+  if (!items.length) {
+    say(file.name + ' はプロッタ出力ではないようです');
+    return;
+  }
+  const stem = file.name.replace(/\.[^.]*$/, '');
+
+  if (file.as === 'pdf') {
+    handOver(stem + '.pdf', await plotPdf(items).arrayBuffer());
+    say(stem + '.pdf — ' + items.length + ' 本');
+  } else {
+    const blob = await plotPng(items);
+
+    handOver(stem + '.png', await blob.arrayBuffer());
+    say(stem + '.png — ' + items.length + ' 本');
+  }
+}
+pdfEl.addEventListener('click', () => {
+  if (pickEl.value) worker.postMessage({ download: pickEl.value, as: 'pdf' });
+  toGuest();
+});
+pngEl.addEventListener('click', () => {
+  if (pickEl.value) worker.postMessage({ download: pickEl.value, as: 'png' });
   toGuest();
 });
 

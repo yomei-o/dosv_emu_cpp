@@ -124,7 +124,9 @@ function listing() {
   const out = [];
   try {
     for (const name of Module.FS.readdir(ROOT)) {
-      if (!/\.JWC$/i.test(name)) continue;
+      /* .PLT as well as .JWC: that is what 入出力 → ②ﾌﾟﾛｯﾀ → ③ﾌｧｲﾙ出力
+       * leaves behind, and the page turns it into a PDF and a PNG. */
+      if (!/\.(JWC|PLT)$/i.test(name)) continue;
       let size = 0;
       try { size = Module.FS.stat(ROOT + '/' + name).size; } catch (err) { /* gone */ }
       out.push({ name, size });
@@ -181,7 +183,7 @@ onmessage = e => {
       const bytes = Module.FS.readFile(ROOT + '/' + m.download);
       const buf = bytes.buffer.slice(bytes.byteOffset,
                                      bytes.byteOffset + bytes.byteLength);
-      postMessage({ file: { name: m.download, buf } }, [buf]);
+      postMessage({ file: { name: m.download, buf, as: m.as } }, [buf]);
     } catch (err) {
       postMessage({ message: m.download + ' が読めませんでした' });
     }
