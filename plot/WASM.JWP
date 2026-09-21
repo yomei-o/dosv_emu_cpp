@@ -1,8 +1,16 @@
-JW_CAD WASM  平文出力 (PDF/PNG 用)
-プロッタの代わりに読める行を出します
+JW_CAD WASM  plain text out (for PDF/PNG)
+one line per thing drawn -- the browser reads it
 
-#これはプロッタの言葉ではなく、ブラウザが読むための行です。
-#1 ミリ = 100 単位。座標はすべて整数、角度は度。
+#This is not a plotter's language.  It is one plain line per thing drawn,
+#so the page can turn it into a PDF and a PNG without decoding HP-GL.
+#100 units = 1mm (unit_x/unit_y), y points up, angles are degrees.
+#
+#  B x0 y0 x1 y1   the area      P n  pen        T n  line type
+#  M x y           pen up        D x y           pen down
+#  O x y           a point       C x y r a0 a1   an arc
+#  A x y sx sy rot c        one half-width character
+#  K x y sx sy rot c1c2     one full-width character
+#  E               the end
 
 DFLT_FMT = %.0f
 unit_x=100
@@ -11,59 +19,37 @@ min_x =-59450,-42050,-29700,-21000,-14850
 min_y =-42050,-29700,-21000,-14850,-10500
 max_x = 59450, 42050, 29700, 21000, 14850
 max_y = 42050, 29700, 21000, 14850, 10500
-PS_NAME =Ａ０,Ａ１,Ａ２,Ａ３,Ａ４
+PS_NAME =A0,A1,A2,A3,A4
 
-INIT2 =B [1] [2] [3] [4]
+INIT2 =B [1] [2] [3] [4]\n	'the area
 
+PEN_1 =P 1\n	'pen
+PEN_2 =P 2\n	'pen
+PEN_3 =P 3\n	'pen
+PEN_4 =P 4\n	'pen
+PEN_5 =P 5\n	'pen
+PEN_6 =P 6\n	'pen
 
-PEN_1 =P 1
+LTYP_1 =T 1\n	'line type
+LTYP_2 =T 2\n	'line type
+LTYP_3 =T 3\n	'line type
+LTYP_4 =T 4\n	'line type
+LTYP_5 =T 5\n	'line type
+LTYP_6 =T 6\n	'line type
+LTYP_7 =T 7\n	'line type
+LTYP_8 =T 8\n	'line type
 
-PEN_2 =P 2
+MOVE  =M [1] [2]\n	'pen up
+DRAW  =D [1] [2]\n	'pen down
+POINT =O [1] [2]\n	'a point
+CIRCLE=C [1] [2] [3] [4%.3f] [5%.3f]\n	'an arc
 
-PEN_3 =P 3
-
-PEN_4 =P 4
-
-PEN_5 =P 5
-
-PEN_6 =P 6
-
-
-LTYP_1 =T 1
-
-LTYP_2 =T 2
-
-LTYP_3 =T 3
-
-LTYP_4 =T 4
-
-LTYP_5 =T 5
-
-LTYP_6 =T 6
-
-LTYP_7 =T 7
-
-LTYP_8 =T 8
-
-
-MOVE  =M [1] [2]
-
-DRAW  =D [1] [2]
-
-POINT =O [1] [2]
-
-CIRCLE=C [1] [2] [3] [4%.3f] [5%.3f]
-
-
-ank_x =0.035
-ank_y =0.09
-knj_x =0.1
-knj_y =0.1
+ank_x =1
+ank_y =1
+knj_x =1
+knj_y =1
 ang_r =1
-ANK   =A [1] [2] [3%.3f] [4%.3f] [9%.3f] [A%c]
+ANK   =A [1] [2] [3%.3f] [4%.3f] [9%.3f] [A%c]\n	'half width
+KANJI =K [1] [2] [3%.3f] [4%.3f] [9%.3f] [A%c][B%c]\n	'full width
 
-KANJI =K [1] [2] [3%.3f] [4%.3f] [9%.3f] [A%c][B%c]
-
-
-TERM  =E
-
+TERM  =E\n	'the end

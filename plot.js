@@ -78,9 +78,14 @@ export function parsePlot(bytes) {
           /^\s*[AK]\s+(-?\d+)\s+(-?\d+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s(.*)$/);
 
         if (m) {
+          /* The sizes are already millimetres (WASM.JWP sets ank_x and the
+             rest to 1), and a full-width character comes as its **JIS**
+             pair, not Shift-JIS -- `#H` is Ｈ.  KANJI's [A%c][B%c] are the
+             two seven-bit bytes an HP-GL alternate character set wants. */
+          const s = f[0] === 'K' ? jisPair(m[6]) : m[6];
+
           items.push({ k: 't', x: +m[1] / 100, y: +m[2] / 100,
-                       sx: +m[3] / 100, sy: +m[4] / 100, rot: +m[5],
-                       s: m[6], pen });
+                       sx: +m[3], sy: +m[4], rot: +m[5], s, pen });
         }
         break;
       }
@@ -88,6 +93,21 @@ export function parsePlot(bytes) {
     }
   }
   return items;
+}
+
+/* JIS X 0208 as a pair of seven-bit bytes -> the character.  The plot writes
+   kanji that way (KANJI's [A%c][B%c]), and the browser can only decode
+   Shift-JIS, so it goes through the usual shuffle. */
+function jisPair(two) {
+  if (two.length < 2) return two;
+  const j1 = two.charCodeAt(0), j2 = two.charCodeAt(1);
+  let s1, s2;
+
+  if (j1 % 2) s2 = j2 + 0x1f + (j2 >= 0x60 ? 1 : 0);
+  else s2 = j2 + 0x7e;
+  s1 = ((j1 - 0x21) >> 1) + 0x81;
+  if (s1 > 0x9f) s1 += 0x40;
+  return SJIS.decode(new Uint8Array([s1, s2]));
 }
 
 /* What the plot covers, with ten millimetres round it -- the same rule the
@@ -105,7 +125,7 @@ export function plotBox(items, margin = 10) {
   for (const it of items) {
     if (it.k === 'l') { see(it.x0, it.y0); see(it.x1, it.y1); }
     else if (it.k === 'c') { see(it.x - it.r, it.y - it.r); see(it.x + it.r, it.y + it.r); }
-    else if (it.k === 't') { see(it.x, it.y); see(it.x + it.sx * it.s.length * 2, it.y + it.sy); }
+    else if (it.k === 't') { see(it.x, it.y); see(it.x + it.sx * 2, it.y + it.sy); }
     else see(it.x, it.y);
   }
   if (x1 < x0) { x0 = y0 = 0; x1 = y1 = 100; }

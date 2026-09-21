@@ -113,6 +113,19 @@ public:
     // block outside the chain is exactly the half-truth it catches.
     uint16_t alloc_env(const std::string& dos_name);
 
+    // How far the clock has run, in hundredths of a second.
+    //
+    // **It stands still unless DOSEMU_CLOCK says otherwise.**  Every screen
+    // this repo compares against was measured with a frozen clock, and
+    // JW_CAD puts the session's length on the screen, so a clock that runs
+    // would move a number in every one of them.  The plotter is what needs
+    // it: 入出力 → ②ﾌﾟﾛｯﾀ paces its output by the clock and waits for ever
+    // when the clock never moves (tools/plotrun.sh).
+    //
+    // The value is instructions per hundredth of a second, so a run stays
+    // reproducible -- the clock is the instruction count, not the wall.
+    uint64_t hundredths() const;
+
 private:
     uint16_t make_child_env(uint16_t parent_env, const std::string& child_name);
     uint16_t stamp_env_path(uint16_t env, const std::string& path);

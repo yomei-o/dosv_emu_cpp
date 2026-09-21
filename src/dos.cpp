@@ -15,6 +15,16 @@ namespace dosemu {
 
 bool Dos::trace = getenv("DOSEMU_DOS_TRACE") != nullptr;
 
+// See the comment on the declaration in src/dos.h.
+uint64_t Dos::hundredths() const {
+    static const uint64_t per = [] {
+        const char* v = getenv("DOSEMU_CLOCK");
+        return v ? strtoull(v, nullptr, 10) : 0ull;
+    }();
+
+    return per ? cpu_.insns / per : 0;
+}
+
 // The interrupt vector table pointed at nothing, because the emulator services INT
 // through a callback and never consults it. That is fine until a program *reads* a
 // vector and calls it — Watcom's W32RUN takes INT 21h with AH=35h and then far-calls
@@ -852,6 +862,14 @@ bool Dos::handle(uint8_t n) {
         case kDevStrat: return device_int(true);
         case kDevInt: return device_int(false);
         case 0x1A:                                       // BIOS time
+            if ((cpu_.r[AX] >> 8) == 0) {
+                // AH=0: the tick count since midnight, 18.2 a second.
+                const uint64_t t = hundredths() * 182 / 1000;
+
+                cpu_.r[CX] = static_cast<uint16_t>((t >> 16) & 0xFFFF);
+                cpu_.r[DX] = static_cast<uint16_t>(t & 0xFFFF);
+                cpu_.sb(AX, 0);                          // no midnight yet
+            }
             return true;
         default:
             return int21_default(n);
@@ -1498,8 +1516,14 @@ bool Dos::int21() {
         case 0x2A:                                                  // get date -> CX=year DH=month DL=day AL=dow
             cpu_.r[CX] = 1993; cpu_.r[DX] = (8 << 8) | 19; cpu_.sb(AX, 4); return true;
         case 0x2B: cpu_.sb(AX, 0); cpu_.flags &= ~CF; return true;      // set date -> accept
-        case 0x2C:                                                  // get time -> CH=hr CL=min DH=sec DL=1/100
-            cpu_.r[CX] = (12 << 8) | 0; cpu_.r[DX] = 0; return true;
+        case 0x2C: {                                                // get time -> CH=hr CL=min DH=sec DL=1/100
+            const uint64_t h = hundredths();
+
+            cpu_.r[CX] = static_cast<uint16_t>(((12 + h / 360000) % 24) << 8
+                                               | (h / 6000) % 60);
+            cpu_.r[DX] = static_cast<uint16_t>(((h / 100) % 60) << 8 | h % 100);
+            return true;
+        }
         case 0x43: {                                                // get/set file attributes (AL=0 get, 1 set)
             if ((cpu_.r[AX] & 0xFF) == 0) {                          // get: also how a program tests existence
                 if (files_.exists(read_asciiz(cpu_.sreg[DS], cpu_.r[DX]))) { cpu_.r[CX] = 0x20; cpu_.flags &= ~CF; }

@@ -31,11 +31,11 @@ cp plot/WASM.JWP tmp/proot/
 # columns come from the bars the original writes (jwcad_dos_wasm's RESUME
 # 4.44); the row at y=136 is the second file in ③ﾌｧｲﾙ出力's list.
 : > tmp/plot/steps.txt
-cat >> tmp/plot/steps.txt <<'STEPS'
+cat >> tmp/plot/steps.txt <<STEPS
 30 296 left
 220 8 left
 400 8 left
-150 136 left
+150 ${ROWY:-136} left
 200 8 left
 type PLOT
 key enter
@@ -68,6 +68,12 @@ shot ./tmp/plot/done.raw
 ' "${TAIL:-400000000}"
 } > tmp/plot/script.txt
 
+# **The clock has to run.**  ②ﾌﾟﾛｯﾀ paces its output by the time of day and
+# waits for ever while INT 21h/2Ch keeps answering 12:00:00 -- which is what
+# it does unless DOSEMU_CLOCK says how many instructions a hundredth of a
+# second is worth.  Everything else in this repo was measured with the clock
+# standing still, so it stays off by default.
+DOSEMU_CLOCK="${DOSEMU_CLOCK:-20000}" \
 DOSEMU_BP='+0DEF:23C5' DOSEMU_BPSTR=2 DOSEMU_BPN=20000 \
     ./dosemu.exe --root tmp/proot --font-ank "$FONT/JWANK16.FNT" \
     --font-kanji "$FONT/JWKAN16.FNT" \
