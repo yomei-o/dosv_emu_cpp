@@ -187,6 +187,11 @@ function boot() {
    been drawn and not saved goes with it.  So it asks.  (Opening a drawing
    *without* losing anything is what the program's own 入出力 is for, and an
    uploaded file is in its list.) */
+/* Going to open the list is as good a moment as any to make sure it is
+   up to date -- the worker re-reads the guest's disk every couple of seconds
+   anyway, but a drawing just saved should be there the instant it is looked
+   for. */
+pickEl.addEventListener('pointerdown', () => worker.postMessage({ list: 1 }));
 pickEl.addEventListener('change', () => {
   if (booted && lastPick
       && !confirm('開き直すと、保存していない作図は消えます。よろしいですか？')) {

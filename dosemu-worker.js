@@ -32,6 +32,12 @@ let gen = 0;
 const BOOT_SLICE = 8000000, RUN_SLICE = 1000000;
 let booted = false;
 let lastSent = 0;
+/* Its own clock.  Sharing lastSent with the throttle below meant the
+ * listing was never sent again after the boot: a frame goes up every
+ * 250ms or so and resets lastSent, so `now - lastSent > 2000` was
+ * almost never true and a drawing the guest had just saved never
+ * turned up in the page's list. */
+let lastList = 0;
 /* Which drawing the guest was booted on -- the page shows it as the one
  * selected, and it is the one a download takes. */
 let current = '';
@@ -98,10 +104,11 @@ function turn(mine) {
    * page's list of what it could download has to notice. */
   const now = Date.now();
   if (booted && (!wasBooted || now - lastSent > 2000)) {
+    lastList = now;
     msg.files = listing();
     msg.current = current;
   }
-  if (msg.frame || now - lastSent > 250 || msg.message) {
+  if (msg.frame || msg.files || now - lastSent > 250 || msg.message) {
     lastSent = now;
     postMessage(msg, msg.frame ? [msg.frame] : []);
   }
