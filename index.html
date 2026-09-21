@@ -36,9 +36,12 @@
   .filebtn { cursor: pointer; }
   /* The list and its button belong together -- the button acts on what the
      list has -- so they are boxed as one control. */
-  .group { display: flex; align-items: center; gap: 6px;
+  .group { display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
            border: 1px solid #2a2e34; border-radius: 4px; padding: 4px 6px; }
   .group label { color: #9aa0a8; font-size: 12px; }
+  /* A drawing's 図面名 can be long, and an option that long stretches the
+     select -- and the box round it -- across the page. */
+  select { max-width: min(100%, 22em); }
   button:disabled { opacity: .45; cursor: default; }
   button:disabled:hover { background: #22262c; }
   .filebtn input { display: none; }

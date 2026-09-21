@@ -195,11 +195,12 @@ function boot(drawing) {
   setTimeout(() => turn(mine), 0);
 }
 
-/* What the page opens with, until the visitor picks something else.
-   SAMPLE2 rather than SAMPLE0: a plan drawing shows what the program
-   does, and SAMPLE0 is an empty sheet with a frame round it.  The
-   port's page opens the same one. */
-let pendingBoot = 'SAMPLE2.JWC';
+/* **No drawing.**  Started with no file on its command line, JW_CAD draws
+   its menu, its counts and an empty sheet and waits -- so that is how the
+   page starts it.  Opening one for the visitor made the list at the top
+   look like a statement about what was on the screen, which it is not.
+   Opening a drawing is 入出力 → ①ﾌｧｲﾙ → ②読込, inside the program. */
+let pendingBoot = '';
 
 onmessage = e => {
   const m = e.data;
