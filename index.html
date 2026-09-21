@@ -106,6 +106,30 @@
       ファイルを出し入れするだけで、開いたり閉じたりはしません。
     </p>
     <p>
+      <strong>ＰＤＦ と ＰＮＧ は「プロッタ出力」です。</strong>
+      JW_CAD の中でこう進みます:
+    </p>
+    <ol>
+      <li>画面左のメニューのいちばん下 <code>入出力</code> を押す</li>
+      <li>上の行の <code>②プロッタ</code> を押す</li>
+      <li>上の行の <code>③ﾌｧｲﾙ出力</code> を押す
+          <small>（プリンタポートではなくこちらです）</small></li>
+      <li>出てくる一覧から <code>WASM.JWP</code> を選び、
+          上の行の <code>①選択確定</code> を押す</li>
+      <li><code>出力ファイル名 ?</code> と聞かれるので
+          <code>PLOT</code> のように打って [Enter]</li>
+      <li>上の行の <code>①確定</code> → <code>① 実行</code></li>
+      <li>「作図処理中」の数が 0 になるまで待つ（図面によっては数十秒）</li>
+      <li>一覧に <code>PLOT</code> が出たら、ここの
+          <strong>ＰＤＦ</strong> か <strong>ＰＮＧ</strong> を押す</li>
+    </ol>
+    <p>
+      <small>ＰＤＦ／ＰＮＧ の釦は、プロッタ出力のファイルがまだ無いあいだは
+      押せません。<code>WASM.JWP</code> は、本物のプロッタの言葉（HP-GL）の
+      代わりに読みやすい行を書かせるための設定ファイルで、こちらで用意して
+      あります。</small>
+    </p>
+    <p>
       <strong>アップロード</strong>——手元の .JWC をディスクに置きます。開くのは
       そのあと <code>入出力</code> → <code>①ファイル</code> → <code>②読込</code> で。
       （作図中のものは消えません。）<br>
@@ -220,7 +244,7 @@ worker.onmessage = e => {
     const img = new ImageData(new Uint8ClampedArray(m.frame), m.width, m.height);
     ctx.putImageData(img, 0, 0);
   }
-  if (m.files) setFiles(m.files);
+  if (m.files) { setFiles(m.files); plotButtons(); }
   if (m.uploaded && m.uploaded.length) {
     /* It is on the guest's disk now.  Opening it is the program's job -- the
        page will not do it, because that would throw away whatever is on the
@@ -267,12 +291,28 @@ pickEl.addEventListener('pointerdown', () => worker.postMessage({ list: 1 }));
    program's own 入出力 does that, without losing what is on the screen. */
 pickEl.addEventListener('change', () => {
   downEl.disabled = !pickEl.value;
-  /* The two plotter buttons only mean anything for what ③ﾌｧｲﾙ出力 left. */
-  const plot = /\.PLT$/i.test(pickEl.value || '');
-
-  pdfEl.disabled = !plot;
-  pngEl.disabled = !plot;
+  plotButtons();
 });
+
+/* The two plotter buttons.  They act on the plotter file ③ﾌｧｲﾙ出力 left --
+   the one picked in the list when that is one, otherwise the newest one
+   there -- so a person does not have to know to go and find it. */
+function plotFile() {
+  if (/\.PLT$/i.test(pickEl.value || '')) return pickEl.value;
+  const all = [...pickEl.options].map(o => o.value)
+                                 .filter(v => /\.PLT$/i.test(v));
+
+  return all.length ? all[all.length - 1] : '';
+}
+function plotButtons() {
+  const have = !!plotFile();
+
+  pdfEl.disabled = !have;
+  pngEl.disabled = !have;
+  pdfEl.title = pngEl.title = have
+    ? plotFile() + ' を PDF／PNG にします'
+    : 'JW_CAD の 入出力 → ②ﾌﾟﾛｯﾀ → ③ﾌｧｲﾙ出力 で書き出すと押せるようになります';
+}
 
 upEl.addEventListener('change', async () => {
   const files = [];
@@ -315,11 +355,15 @@ async function plotOut(file) {
   }
 }
 pdfEl.addEventListener('click', () => {
-  if (pickEl.value) worker.postMessage({ download: pickEl.value, as: 'pdf' });
+  const f = plotFile();
+
+  if (f) worker.postMessage({ download: f, as: 'pdf' });
   toGuest();
 });
 pngEl.addEventListener('click', () => {
-  if (pickEl.value) worker.postMessage({ download: pickEl.value, as: 'png' });
+  const f = plotFile();
+
+  if (f) worker.postMessage({ download: f, as: 'png' });
   toGuest();
 });
 
