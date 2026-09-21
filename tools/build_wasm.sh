@@ -7,7 +7,14 @@
 # is meant to sit side by side), because that is where the JW_CAD distribution
 # and the DOS/V fonts are.  Nothing is copied into this repo: --embed-file puts
 # them into the .wasm, under the same names the native runs use, so the page
-# needs no server and no upload.
+# needs no server to start.
+#
+# `FS` is exported because the guest's disk is the page's disk: a drawing the
+# visitor uploads is written into orig/ before the guest is booted on it, and a
+# drawing the guest saved is read back out of orig/ to download.  Going through
+# the filesystem rather than adding an entry point is deliberate -- the program
+# opens and saves through DOS, so a file that arrives this way is a file that
+# arrives the way a real one would.
 set -e
 cd "$(dirname "$0")/.."
 
@@ -51,7 +58,7 @@ mkdir -p tmp
     -s MODULARIZE=1 -s EXPORT_NAME=createDosemu \
     -s ENVIRONMENT=web,worker,node \
     -s ALLOW_MEMORY_GROWTH=1 -s INITIAL_MEMORY=67108864 \
-    -s EXPORTED_RUNTIME_METHODS=UTF8ToString,stringToUTF8,lengthBytesUTF8,HEAPU8 \
+    -s EXPORTED_RUNTIME_METHODS=UTF8ToString,stringToUTF8,lengthBytesUTF8,HEAPU8,FS \
     -s EXPORTED_FUNCTIONS="$EXPORTS" \
     -s DISABLE_EXCEPTION_CATCHING=0
 

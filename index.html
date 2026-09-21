@@ -29,22 +29,24 @@
   #ime { position: absolute; left: -9999px; width: 1px; height: 1px;
          opacity: 0; padding: 0; border: 0; }
   .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0; }
-  select, button {
+  select, button, .filebtn {
     font: inherit; background: #22262c; color: #d8dbe0;
     border: 1px solid #343a42; border-radius: 4px; padding: 5px 10px;
   }
-  button:hover, select:hover { background: #2a2f36; }
+  .filebtn { cursor: pointer; }
+  .filebtn input { display: none; }
+  button:hover, select:hover, .filebtn:hover { background: #2a2f36; }
   code, .status { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
   .status { color: #7f868f; }
+  /* Only shown when the guest refuses to start: what it said before it
+     stopped is the one thing that explains it. */
   pre.console {
-    background: #0e1013; border: 1px solid #2a2e34; border-radius: 4px;
+    background: #0e1013; border: 1px solid #5a2e2e; border-radius: 4px;
     padding: 8px; margin: 12px 0 0; white-space: pre-wrap;
-    font-family: ui-monospace, Consolas, monospace; font-size: 12px; color: #9aa0a8;
+    font-family: ui-monospace, Consolas, monospace; font-size: 12px; color: #d8a0a0;
   }
   footer { margin-top: 20px; color: #7f868f; font-size: 12px; }
   a { color: #7fb2e5; }
-  table { border-collapse: collapse; margin: 8px 0; font-size: 12px; }
-  td, th { border: 1px solid #2a2e34; padding: 3px 8px; text-align: left; }
 </style>
 </head>
 <body>
@@ -58,9 +60,10 @@
   </p>
 
   <div class="bar">
-    <select id="pick"></select>
-    <button id="reset">最初から</button>
-    <button id="turbo">はやく回す</button>
+    <select id="pick" aria-label="開く図面"></select>
+    <label class="filebtn">アップロード<input type="file" id="up"
+           accept=".jwc,.JWC" multiple></label>
+    <button id="down">ダウンロード</button>
     <span class="status" id="status">読み込み中…</span>
   </div>
 
@@ -78,11 +81,14 @@
       左ボタン＝指示、右ボタン＝読取。メニューは画面の左、レイヤは右下。
       キーボードもそのまま届きます（一文字キー、数字、[Enter]、[BS]、[ESC]、[F1]〜[F10]）。
       <strong>文字コマンドでは日本語も打てます</strong>——OS の入力メソッドで変換して確定すると、
-      本物がそれを受け取ります。
+      本物がそれを受け取ります。起動に 4000 万命令ほどかかるので、最初の画面までは数秒かかります。
     </p>
     <p>
-      起動に 4000 万命令ほどかかります。「はやく回す」を押すと 1 フレームあたりの
-      命令数を増やしますが、そのぶん反応は粗くなります。
+      <strong>アップロード</strong>すると、その .JWC がエミュレータの中のディスクに置かれ、
+      そのまま開きます。プログラムの <code>入出力</code> からも見えるので、本物の
+      ファイル一覧から選ぶこともできます。<strong>ダウンロード</strong>は、いま選んでいる
+      図面をそのまま手元に保存します——<code>入出力</code> で上書き保存したあとに押せば、
+      本物が書いた .JWC がそのまま取り出せます。
     </p>
     <p>
       対になる移植のほうは
@@ -98,25 +104,36 @@ const ctx = canvas.getContext('2d', { alpha: false });
 const statusEl = document.getElementById('status');
 const consoleEl = document.getElementById('console');
 const pickEl = document.getElementById('pick');
+const upEl = document.getElementById('up');
+const downEl = document.getElementById('down');
 const imeEl = document.getElementById('ime');
-
-/* The drawings that ship with JW_CAD, in the order its own file list has them. */
-const DRAWINGS = ['SAMPLE0', 'SAMPLE1', 'SAMPLE2', 'SAMPLE3', 'SAMPLE4',
-                  'SAMPLE5', 'SAMPLE6', 'TEST1', 'TEST2', 'TEST3', 'TEST4',
-                  'TEST5', 'TEST6', 'TEST7'];
-for (const d of DRAWINGS) {
-  const o = document.createElement('option');
-  o.value = d + '.JWC';
-  o.textContent = d + '.JWC';
-  pickEl.append(o);
-}
 
 /* The emulator runs in a worker.  It has to run *continuously* -- the guest is
    a real program waiting on its own loops, and a slice small enough to keep a
    page responsive is too small to get it anywhere.  So the worker owns the
-   clock and posts the screen when it changes; the page only forwards input. */
+   clock and posts the screen when it changes; the page only forwards input.
+   It owns the guest's disk too, which is what upload and download talk to. */
 const worker = new Worker('dosemu-worker.js');
-let lastInsns = 0, lastAt = 0;
+let booted = false;
+let lastPick = '';           /* what the guest is running on now */
+
+/* The drawings on the guest's disk.  The worker sends the list after every
+   boot and every couple of seconds while the guest is running, so a drawing
+   the program has just saved turns up here by itself. */
+function setFiles(files, current) {
+  const was = pickEl.value || current;
+  pickEl.textContent = '';
+  for (const f of files) {
+    const o = document.createElement('option');
+    o.value = f.name;
+    o.textContent = f.name;
+    pickEl.append(o);
+  }
+  if (files.some(f => f.name === was)) pickEl.value = was;
+  if (!lastPick) lastPick = pickEl.value;
+}
+
+function say(text) { statusEl.textContent = text; }
 
 worker.onmessage = e => {
   const m = e.data;
@@ -127,40 +144,71 @@ worker.onmessage = e => {
     const img = new ImageData(new Uint8ClampedArray(m.frame), m.width, m.height);
     ctx.putImageData(img, 0, 0);
   }
-  if (m.insns !== undefined) {
-    const now = performance.now();
-    if (lastAt && now > lastAt) {
-      const rate = (m.insns - lastInsns) / (now - lastAt) * 1000;
-      statusEl.textContent =
-        (m.booted ? '' : '起動中… ') +
-        (m.insns / 1e6).toFixed(1) + ' 百万命令  ' +
-        (rate / 1e6).toFixed(1) + ' 百万命令/秒' +
-        (m.message ? '  — ' + m.message : '');
-    }
-    lastInsns = m.insns; lastAt = now;
+  if (m.files) setFiles(m.files, m.current);
+  if (m.uploaded && m.uploaded.length) {
+    /* An uploaded drawing is what the visitor wants to see, so open it. */
+    pickEl.value = m.uploaded[m.uploaded.length - 1];
+    boot();
+    say(m.uploaded.join('、') + ' を読み込みました');
+    return;
   }
-  if (m.console !== undefined) {
+  if (m.file) {
+    const url = URL.createObjectURL(
+      new Blob([m.file.buf], { type: 'application/octet-stream' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = m.file.name;
+    a.click();
+    URL.revokeObjectURL(url);
+    say(m.file.name + ' を保存しました');
+    return;
+  }
+  if (m.booted !== undefined && m.booted !== booted) {
+    booted = m.booted;
+    if (booted) say(pickEl.value);
+  }
+  if (m.message) {
+    say(m.message);
     consoleEl.hidden = !m.console;
-    consoleEl.textContent = m.console;
+    consoleEl.textContent = m.console || '';
   }
 };
 
 function boot() {
-  lastInsns = 0; lastAt = 0;
+  booted = false;
+  lastPick = pickEl.value;
+  say('起動中…');
+  consoleEl.hidden = true;
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   worker.postMessage({ boot: pickEl.value });
 }
-pickEl.addEventListener('change', boot);
-document.getElementById('reset').addEventListener('click', boot);
-const turboEl = document.getElementById('turbo');
-let turbo = false;
-turboEl.addEventListener('click', () => {
-  turbo = !turbo;
-  turboEl.textContent = turbo ? 'ふつうに回す' : 'はやく回す';
-  worker.postMessage({ turbo });
+/* Choosing another drawing starts the guest again, which is the only way in
+   from outside -- but the program is already running by then and whatever has
+   been drawn and not saved goes with it.  So it asks.  (Opening a drawing
+   *without* losing anything is what the program's own 入出力 is for, and an
+   uploaded file is in its list.) */
+pickEl.addEventListener('change', () => {
+  if (booted && lastPick
+      && !confirm('開き直すと、保存していない作図は消えます。よろしいですか？')) {
+    pickEl.value = lastPick;
+    return;
+  }
+  boot();
 });
-boot();
+
+upEl.addEventListener('change', async () => {
+  const files = [];
+  for (const f of upEl.files) {
+    files.push({ name: f.name.toUpperCase(), buf: await f.arrayBuffer() });
+  }
+  upEl.value = '';                       // so the same file can be picked twice
+  if (files.length) worker.postMessage({ upload: files }, files.map(f => f.buf));
+});
+
+downEl.addEventListener('click', () => {
+  if (!pickEl.value) return;
+  worker.postMessage({ download: pickEl.value });
+});
 
 /* Where a pointer event lands on the guest's 640x480, whatever the canvas has
    been scaled to. */
@@ -251,10 +299,13 @@ imeEl.addEventListener('input', e => {
 });
 
 /* The hidden field keeps the keyboard so that an input method can attach to
-   it, and everything that is not a composed character is forwarded by hand. */
+   it, and everything that is not a composed character is forwarded by hand.
+   The page's own controls keep theirs: a key typed into the file button or
+   the drawing list is not the guest's. */
 window.addEventListener('keydown', e => {
   if (e.ctrlKey && (e.key === 'r' || e.key === 'R')) return;   // leave reload alone
   if (composing || e.isComposing) return;
+  if (e.target !== imeEl && e.target !== document.body) return;
   const w = keyWord(e);
   if (!w) return;
   e.preventDefault();

@@ -9,7 +9,9 @@
  *
  * Only the steps a screen comparison needs are here -- wait/run, mouse, down,
  * up, click, key, type, shot, end -- with the same meaning src/main.cpp gives
- * them: the clock is the instruction counter, not the wall clock.
+ * them: the clock is the instruction counter, not the wall clock.  One step is
+ * this runner's own: `getfile GUEST.JWC local/path` takes a file off the
+ * guest's disk, the way the page's ダウンロード does.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -82,6 +84,15 @@ function fire(insns) {
       for (const ch of arg) Module._de_key(ch.charCodeAt(0));
     } else if (op === 'shot') {
       save(arg);
+    } else if (op === 'getfile') {
+      /* `getfile GUEST.JWC local/path` -- take a file off the guest's disk,
+       * which is what index.html's ダウンロード does.  It is here rather than
+       * in the native runner because only the browser build has a disk that
+       * lives in memory; the native one writes into a real directory and the
+       * file is simply there afterwards. */
+      const [from, to] = arg.split(/\s+/);
+      writeFileSync(to, Buffer.from(Module.FS.readFile('orig/' + from)));
+      console.error('got ' + from + ' -> ' + to);
     } else if (op === 'end') {
       done = at.length;
       return true;

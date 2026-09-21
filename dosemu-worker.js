@@ -6,8 +6,18 @@
  * small to get it anywhere, so the clock lives here instead -- the worker runs
  * flat out and posts the screen when it has changed.  The page only forwards
  * input, which is why it stays smooth while the guest is busy.
+ *
+ * The guest's disk lives here too.  It is emscripten's in-memory filesystem,
+ * with the JW_CAD distribution baked in under `orig/` at build time, and it is
+ * writable: when the guest saves a drawing the bytes land in `orig/` like any
+ * other file.  That is what the page's upload and download talk to -- a file
+ * from the visitor's machine is written into `orig/` before the guest is
+ * booted on it, and a file the guest wrote is read back out.  Nothing else
+ * would do: the program opens and saves through DOS, and DOS is this.
  */
 importScripts('dosemu.js');
+
+const ROOT = 'orig';
 
 let Module = null;
 let running = false;
@@ -18,11 +28,13 @@ let gen = 0;
 /* Instructions per turn.  Big while the guest is still starting -- it has
  * forty million to get through before it puts anything up and there is nothing
  * to look at meanwhile -- and smaller once it is drawing, so the screen keeps
- * up with the pointer.  `turbo` raises both. */
+ * up with the pointer. */
 const BOOT_SLICE = 8000000, RUN_SLICE = 1000000;
-let fast = false;
 let booted = false;
 let lastSent = 0;
+/* Which drawing the guest was booted on -- the page shows it as the one
+ * selected, and it is the one a download takes. */
+let current = '';
 
 /* Input arrives while a slice is running, so it is queued and handed over
  * between slices -- the guest reads the mouse and the keyboard through the
@@ -61,12 +73,14 @@ function changed(px, n) {
 function turn(mine) {
   if (!running || !Module || mine !== gen) return;
   pump();
-  const insns = Module._de_run((booted ? RUN_SLICE : BOOT_SLICE) * (fast ? 4 : 1));
+  Module._de_run(booted ? RUN_SLICE : BOOT_SLICE);
   const fb = Module._de_frame();
-  const msg = { insns, booted: !!Module._de_graphics() };
+  const msg = { booted: !!Module._de_graphics() };
+  const wasBooted = booted;
   booted = msg.booted;
   if (Module._de_dead()) {
     msg.message = Module.UTF8ToString(Module._de_message());
+    msg.console = Module.UTF8ToString(Module._de_console());
     running = false;
   }
   if (fb) {
@@ -79,11 +93,16 @@ function turn(mine) {
       msg.height = h;
     }
   }
+  /* The disk is only worth re-listing once the guest is running and only now
+   * and then: the guest writes a drawing when the visitor asks it to, and the
+   * page's list of what it could download has to notice. */
   const now = Date.now();
+  if (booted && (!wasBooted || now - lastSent > 2000)) {
+    msg.files = listing();
+    msg.current = current;
+  }
   if (msg.frame || now - lastSent > 250 || msg.message) {
     lastSent = now;
-    const con = Module.UTF8ToString(Module._de_console());
-    if (con) msg.console = con;
     postMessage(msg, msg.frame ? [msg.frame] : []);
   }
   /* setTimeout rather than a tight loop: the worker has to come back to its
@@ -91,7 +110,27 @@ function turn(mine) {
   setTimeout(() => turn(mine), 0);
 }
 
+/* The drawings on the guest's disk, by name.  Only the drawings: the page
+ * offers these to open and to download, and the program, its help file and
+ * the fonts are not the visitor's to take. */
+function listing() {
+  const out = [];
+  try {
+    for (const name of Module.FS.readdir(ROOT)) {
+      if (!/\.JWC$/i.test(name)) continue;
+      let size = 0;
+      try { size = Module.FS.stat(ROOT + '/' + name).size; } catch (err) { /* gone */ }
+      out.push({ name, size });
+    }
+  } catch (err) {
+    return [];
+  }
+  out.sort((a, b) => a.name.localeCompare(b.name));
+  return out;
+}
+
 function boot(drawing) {
+  current = drawing;
   const n = Module.lengthBytesUTF8(drawing) + 1;
   const p = Module._malloc(n);
   Module.stringToUTF8(drawing, p, n);
@@ -108,16 +147,48 @@ let pendingBoot = 'SAMPLE0.JWC';
 
 onmessage = e => {
   const m = e.data;
-  if (m.turbo !== undefined) { fast = !!m.turbo; return; }
   if (m.boot !== undefined) {
     if (Module) boot(m.boot);
     else pendingBoot = m.boot;
     return;
   }
+  /* A file from the visitor's machine, written onto the guest's disk under the
+   * name DOS will see.  JW_CAD's own file list shows whatever is there, so an
+   * uploaded drawing can be opened from inside the program as well as booted
+   * into. */
+  if (m.upload) {
+    const done = [];
+    for (const f of m.upload) {
+      try {
+        Module.FS.writeFile(ROOT + '/' + f.name, new Uint8Array(f.buf));
+        done.push(f.name);
+      } catch (err) {
+        postMessage({ message: f.name + ' を書けませんでした: ' + err });
+      }
+    }
+    postMessage({ files: listing(), current, uploaded: done });
+    return;
+  }
+  if (m.download) {
+    try {
+      const bytes = Module.FS.readFile(ROOT + '/' + m.download);
+      const buf = bytes.buffer.slice(bytes.byteOffset,
+                                     bytes.byteOffset + bytes.byteLength);
+      postMessage({ file: { name: m.download, buf } }, [buf]);
+    } catch (err) {
+      postMessage({ message: m.download + ' が読めませんでした' });
+    }
+    return;
+  }
+  if (m.list) { postMessage({ files: listing(), current }); return; }
   queue.push(m);
 };
 
 createDosemu().then(mod => {
   Module = mod;
   boot(pendingBoot);
+  /* The list goes up before the guest has drawn anything: if it refuses to
+   * start there will never be a running frame to hang it off, and the page
+   * still has to offer the other drawings. */
+  postMessage({ files: listing(), current });
 });
