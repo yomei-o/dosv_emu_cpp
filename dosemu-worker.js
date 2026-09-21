@@ -145,6 +145,13 @@ function boot(drawing) {
   Module.stringToUTF8(drawing, p, n);
   Module._de_boot(p);
   Module._free(p);
+  /* **The guest's clock has to run here.**  入出力 → ②ﾌﾟﾛｯﾀ paces its
+     output by the time of day and waits for ever while INT 21h/2Ch keeps
+     answering 12:00:00.  It stands still by default because every screen
+     the repo is measured against was taken that way; a person at the page
+     is not comparing screens, so the page turns it on.  The number is
+     instructions to a hundredth of a second. */
+  if (Module._de_clock) Module._de_clock(20000);
   previous = null;
   booted = false;
   running = true;

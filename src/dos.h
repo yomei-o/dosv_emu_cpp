@@ -126,6 +126,11 @@ public:
     // reproducible -- the clock is the instruction count, not the wall.
     uint64_t hundredths() const;
 
+    // Instructions to a hundredth of a second; 0 stops the clock.  The env
+    // var DOSEMU_CLOCK sets it for the native front end, and the browser's
+    // sets it through de_clock().
+    static uint64_t clock_per;
+
 private:
     uint16_t make_child_env(uint16_t parent_env, const std::string& child_name);
     uint16_t stamp_env_path(uint16_t env, const std::string& path);

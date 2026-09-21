@@ -51,6 +51,12 @@ if (!Module._de_boot(p)) {
   process.exit(1);
 }
 Module._free(p);
+/* The clock, if the script asks for it: `DOSEMU_CLOCK=20000 node ...`.  It
+   stands still otherwise, which is how every screen here was measured --
+   but the plotter waits on the time of day and needs it running. */
+if (Module._de_clock && process.env.DOSEMU_CLOCK) {
+  Module._de_clock(Number(process.env.DOSEMU_CLOCK));
+}
 
 /* A `wait` is not a step but the clock between two of them, exactly as
  * run_script() has it. */

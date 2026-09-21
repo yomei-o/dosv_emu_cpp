@@ -29,7 +29,7 @@ FONT="${FONT:-../jwcad_dos_wasm/font}"
 
 EXPORTS=_main,_de_boot,_de_run,_de_frame,_de_width,_de_height,_de_graphics
 EXPORTS=$EXPORTS,_de_dead,_de_message,_de_console,_de_load_seg
-EXPORTS=$EXPORTS,_de_mouse,_de_button,_de_key,_de_mods
+EXPORTS=$EXPORTS,_de_mouse,_de_button,_de_key,_de_mods,_de_clock
 EXPORTS=$EXPORTS,_malloc,_free
 
 # Everything but src/main.cpp, which is the native front end.
@@ -42,6 +42,13 @@ done
 EMBED=""
 # The program, its help and its palette, plus the drawings that ship with it.
 for f in "$ORIG"/JW_CADV.EXE "$ORIG"/JW_PAL.DAT "$ORIG"/*.JWC "$ORIG"/JW_CADV.HLP; do
+    [ -f "$f" ] || continue
+    EMBED="$EMBED --embed-file $f@/orig/$(basename "$f")"
+done
+# And the plotter definitions: the one that ships plus **our own**, which is
+# what makes 入出力 → ②ﾌﾟﾛｯﾀ → ③ﾌｧｲﾙ出力 write something the page can turn
+# into a PDF and a PNG (plot/WASM.JWP, plot.js).
+for f in "$ORIG"/*.JWP plot/*.JWP; do
     [ -f "$f" ] || continue
     EMBED="$EMBED --embed-file $f@/orig/$(basename "$f")"
 done

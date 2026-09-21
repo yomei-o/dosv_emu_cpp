@@ -16,13 +16,13 @@ namespace dosemu {
 bool Dos::trace = getenv("DOSEMU_DOS_TRACE") != nullptr;
 
 // See the comment on the declaration in src/dos.h.
-uint64_t Dos::hundredths() const {
-    static const uint64_t per = [] {
-        const char* v = getenv("DOSEMU_CLOCK");
-        return v ? strtoull(v, nullptr, 10) : 0ull;
-    }();
+uint64_t Dos::clock_per = [] {
+    const char* v = getenv("DOSEMU_CLOCK");
+    return v ? strtoull(v, nullptr, 10) : 0ull;
+}();
 
-    return per ? cpu_.insns / per : 0;
+uint64_t Dos::hundredths() const {
+    return clock_per ? cpu_.insns / clock_per : 0;
 }
 
 // The interrupt vector table pointed at nothing, because the emulator services INT

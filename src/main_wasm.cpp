@@ -134,6 +134,17 @@ EMSCRIPTEN_KEEPALIVE const char* de_message(void) { return message.c_str(); }
 EMSCRIPTEN_KEEPALIVE const char* de_console(void) { return console.c_str(); }
 EMSCRIPTEN_KEEPALIVE int de_load_seg(void) { return load_seg; }
 
+/* How fast the guest's clock runs: instructions to a hundredth of a second,
+ * 0 for a clock that stands still.
+ *
+ * It has to stand still by default -- every screen this repo is measured
+ * against was taken that way, and JW_CAD puts the session's length on the
+ * screen.  **The plotter needs it running**: 入出力 → ②ﾌﾟﾛｯﾀ paces its
+ * output by the time of day and waits for ever otherwise. */
+EMSCRIPTEN_KEEPALIVE void de_clock(double per) {
+    dosemu::Dos::clock_per = per > 0 ? static_cast<uint64_t>(per) : 0;
+}
+
 // The screen, as RGBA. Null until the guest sets a graphics mode.
 EMSCRIPTEN_KEEPALIVE unsigned char* de_frame(void) {
     if (!dos || !dos->vga.graphics()) return nullptr;
