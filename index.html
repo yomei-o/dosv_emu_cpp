@@ -499,11 +499,40 @@ function typeString(str) {
   if (keys.length) worker.postMessage({ keys });
 }
 
+/* Is an input method in the middle of a word?
+ *
+ * **The browser's own answer is the one to trust.**  `isComposing` on the
+ * event is true for exactly the keys that belong to a composition; the flag
+ * below is only for the `input` event, which does not always carry one.
+ *
+ * Keeping a flag of our own and believing it is what broke the keyboard for
+ * a visitor (2026-09-21): `compositionend` does not always follow
+ * `compositionstart` -- a composition abandoned with [ESC], or by clicking
+ * away mid-word, can leave nothing behind -- and the flag then stayed true
+ * for the rest of the session.  Every key after the first was swallowed,
+ * which is why answering 出力ファイル名 ? only ever took one character.
+ * So it is cleared whenever the field loses the keyboard as well. */
 let composing = false;
 imeEl.addEventListener('compositionstart', () => { composing = true; });
 imeEl.addEventListener('compositionend', e => {
-  composing = false; imeEl.value = ''; typeString(e.data || '');
+  composing = false; imeEl.value = ''; saying(''); typeString(e.data || '');
 });
+imeEl.addEventListener('compositioncancel', () => { composing = false; saying(''); });
+imeEl.addEventListener('blur', () => { composing = false; saying(''); });
+/* **Say that a word is being composed.**  The field is parked off-screen so
+   that an input method can attach to it, which means the half-typed word is
+   nowhere the visitor can see: with the input method in kana mode, typing a
+   file name looks exactly like a keyboard that has stopped working.  So the
+   pending text goes on the status line until it is committed. */
+imeEl.addEventListener('compositionupdate', e => {
+  saying(e.data ? '変換中: ' + e.data + '（確定するとゲストに届きます）' : '');
+});
+
+let wasSaying = '';
+function saying(text) {
+  if (text) { if (!wasSaying) wasSaying = statusEl.textContent; say(text); }
+  else if (wasSaying) { say(wasSaying); wasSaying = ''; }
+}
 imeEl.addEventListener('input', e => {
   if (composing || e.isComposing) return;
   const v = imeEl.value; imeEl.value = ''; typeString(v);
@@ -515,7 +544,9 @@ imeEl.addEventListener('input', e => {
    the drawing list is not the guest's. */
 window.addEventListener('keydown', e => {
   if (e.ctrlKey && (e.key === 'r' || e.key === 'R')) return;   // leave reload alone
-  if (composing || e.isComposing) return;
+  /* `isComposing`, and the 229 every browser sends for a key an input
+     method has taken -- not a flag of ours.  See above. */
+  if (e.isComposing || e.keyCode === 229) return;
   if (e.target !== imeEl && e.target !== document.body) return;
   const w = keyWord(e);
   if (!w) return;

@@ -63,7 +63,12 @@ const doc = {
   addEventListener() {},
 };
 globalThis.document = doc;
-globalThis.window = { addEventListener() {} };
+/* The window's own listeners, kept so that a keystroke can be delivered the
+   way the browser delivers one. */
+const winListeners = [];
+globalThis.window = {
+  addEventListener(k, f) { if (k === 'keydown') winListeners.push(f); },
+};
 globalThis.ImageData = class { constructor() {} };
 globalThis.TextDecoder = class { decode() { return '�'; } };
 globalThis.performance = { now: () => Date.now() };
@@ -187,5 +192,70 @@ worker.onmessage({ data: { current: 'SAMPLE2.JWC',
                                    { name: 'SAMPLE2.JWC', size: 1 }] } });
 ok(els.pick.value === 'SAMPLE2.JWC',
    'the list shows the drawing the guest actually has open');
+
+/* **Typing.**  A visitor reported that only the first character of a name
+   reached the guest (2026-09-21).  The worker was not at fault -- driven
+   directly it takes all four (tools/typecheck.mjs) -- so the page is, and
+   the page's keyboard is this: a hidden field holds the focus so that an
+   input method can attach to it, and every key that is not a composed
+   character is forwarded by hand.
+
+   Two ways that goes wrong, and both are checked here: the guard on where
+   the key came from, and the flag that says a composition is in progress.
+   The flag is the dangerous one -- nothing resets it if a composition is
+   abandoned, and from then on the keyboard is dead for good. */
+const key = (k, opts) => {
+  /* A key an input method has taken: the browser marks it, and sends 229
+     for the code.  Modelling that is the point -- the page must go by what
+     the event says and not by a flag it keeps itself. */
+  const e = {
+    key: k, code: 'Key' + k.toUpperCase(), target: (opts && opts.target) || els.ime,
+    ctrlKey: false, shiftKey: false, altKey: false,
+    isComposing: !!(opts && opts.composing),
+    keyCode: opts && opts.composing ? 229 : k.toUpperCase().charCodeAt(0),
+    preventDefault() {},
+  };
+
+  for (const f of winListeners) f(e);
+};
+const keysSent = () => posted.filter(m => m.keys).map(m => m.keys.join(',')).join(' ');
+
+posted.length = 0;
+doc.activeElement = els.ime;
+for (const ch of 'PLOT') key(ch);
+ok(keysSent() === '80 76 79 84',
+   'every key typed into the field reaches the guest (' + keysSent() + ')');
+
+/* The listing arrives every couple of seconds while someone is typing.  It
+   rebuilds the drawing list and enables buttons, and none of that may take
+   the keyboard away from the guest. */
+posted.length = 0;
+worker.onmessage({ data: { files: [{ name: 'SAMPLE0.JWC', size: 1 },
+                                   { name: 'PLOT', size: 900, plot: true }] } });
+for (const ch of 'PLOT') key(ch);
+ok(keysSent() === '80 76 79 84',
+   'and still does while the file list is being refreshed (' + keysSent() + ')');
+
+/* A composition that is started and then abandoned -- pressing [ESC] out of
+   one, or clicking away mid-word.  compositionend does not always follow. */
+posted.length = 0;
+fire('ime:compositionstart');
+for (const ch of 'PLOT') key(ch, { composing: true });
+ok(keysSent() === '',
+   'nothing is forwarded while an input method is composing');
+/* And while it composes, the visitor is told -- the field is off-screen, so
+   a half-typed word is otherwise invisible and the keyboard looks dead. */
+fire('ime:compositionupdate', { data: 'ぷろ' });
+ok(/ぷろ/.test(els.status.textContent),
+   'and the half-typed word is shown (' + els.status.textContent + ')');
+
+fire('ime:blur');
+ok(!/ぷろ/.test(els.status.textContent),
+   'and taken off the line when the composition goes away');
+posted.length = 0;
+for (const ch of 'PLOT') key(ch);
+ok(keysSent() === '80 76 79 84',
+   'and the keyboard comes back when the composition is abandoned ('
+   + keysSent() + ')');
 
 process.exit(bad ? 1 : 0);
