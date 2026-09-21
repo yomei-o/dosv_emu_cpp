@@ -34,6 +34,13 @@
     border: 1px solid #343a42; border-radius: 4px; padding: 5px 10px;
   }
   .filebtn { cursor: pointer; }
+  /* The list and its button belong together -- the button acts on what the
+     list has -- so they are boxed as one control. */
+  .group { display: flex; align-items: center; gap: 6px;
+           border: 1px solid #2a2e34; border-radius: 4px; padding: 4px 6px; }
+  .group label { color: #9aa0a8; font-size: 12px; }
+  button:disabled { opacity: .45; cursor: default; }
+  button:disabled:hover { background: #22262c; }
   .filebtn input { display: none; }
   button:hover, select:hover, .filebtn:hover { background: #2a2f36; }
   code, .status { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
@@ -59,11 +66,19 @@
     書いた画素で、フォントも DOS/V と同じように OS（＝このエミュレータ）が渡しています。
   </p>
 
+  <!-- The page does one thing the program cannot: move files between the
+       visitor's machine and the guest's disk.  Opening, saving, deleting and
+       combining drawings are JW_CAD's own 入出力, and the page stays out of
+       it -- it never boots or loads anything, because that would throw away
+       whatever is being drawn. -->
   <div class="bar">
-    <select id="pick" aria-label="開く図面"></select>
     <label class="filebtn">アップロード<input type="file" id="up"
            accept=".jwc,.JWC" multiple></label>
-    <button id="down">ダウンロード</button>
+    <span class="group">
+      <label for="pick">エミュレータの中</label>
+      <select id="pick"></select>
+      <button id="down" disabled>ダウンロード</button>
+    </span>
     <span class="status" id="status">読み込み中…</span>
   </div>
 
@@ -84,11 +99,18 @@
       本物がそれを受け取ります。起動に 4000 万命令ほどかかるので、最初の画面までは数秒かかります。
     </p>
     <p>
-      <strong>アップロード</strong>すると、その .JWC がエミュレータの中のディスクに置かれ、
-      そのまま開きます。プログラムの <code>入出力</code> からも見えるので、本物の
-      ファイル一覧から選ぶこともできます。<strong>ダウンロード</strong>は、いま選んでいる
-      図面をそのまま手元に保存します——<code>入出力</code> で上書き保存したあとに押せば、
-      本物が書いた .JWC がそのまま取り出せます。
+      <strong>図面を開く・保存するのは JW_CAD の <code>入出力</code> です。</strong>
+      上の 3 つは、手元のパソコンとエミュレータの中のディスクとの間で
+      ファイルを出し入れするだけで、開いたり閉じたりはしません。
+    </p>
+    <p>
+      <strong>アップロード</strong>——手元の .JWC をディスクに置きます。開くのは
+      そのあと <code>入出力</code> → <code>①ファイル</code> → <code>②読込</code> で。
+      （作図中のものは消えません。）<br>
+      <strong>ダウンロード</strong>——一覧で選んだ図面を手元に保存します。取り出せるのは
+      <strong>ディスクにある中身</strong>なので、作図したものが欲しいときは先に
+      <code>入出力</code> → <code>①保存</code> してから押してください。
+      保存して増えた図面には <code>●</code> が付き、そのまま選ばれた状態になります。
     </p>
     <p>
       対になる移植のほうは
@@ -114,23 +136,48 @@ const imeEl = document.getElementById('ime');
    clock and posts the screen when it changes; the page only forwards input.
    It owns the guest's disk too, which is what upload and download talk to. */
 const worker = new Worker('dosemu-worker.js');
+/* tools/barcheck.mjs drives the page headlessly and needs the one object
+   the whole script hangs off. */
+globalThis.__worker = worker;
 let booted = false;
-let lastPick = '';           /* what the guest is running on now */
+/* What the guest's disk held when the page opened.  A drawing that was not
+   there then is one the visitor has just saved, and that is the one they are
+   reaching for, so it is marked and picked out for them. */
+let atStart = null;
+const known = new Set();
 
 /* The drawings on the guest's disk.  The worker sends the list after every
    boot and every couple of seconds while the guest is running, so a drawing
    the program has just saved turns up here by itself. */
-function setFiles(files, current) {
-  const was = pickEl.value || current;
+function setFiles(files) {
+  const was = pickEl.value;
+  const fresh = [];
+
+  if (!atStart) atStart = new Set(files.map(f => f.name));
   pickEl.textContent = '';
   for (const f of files) {
     const o = document.createElement('option');
+    const isNew = !atStart.has(f.name);
+
     o.value = f.name;
-    o.textContent = f.name;
+    /* ● marks a drawing that was not on the disk when the page opened.  The
+       list is alphabetical, so without it a drawing just saved is lost among
+       the fourteen that ship with the program. */
+    o.textContent = (isNew ? '● ' : '') + f.name;
     pickEl.append(o);
+    if (isNew) fresh.push(f.name);
   }
   if (files.some(f => f.name === was)) pickEl.value = was;
-  if (!lastPick) lastPick = pickEl.value;
+  /* A drawing appearing is the visitor having just saved it, so it becomes
+     the one the button will take -- unless they are in the middle of
+     choosing something else, in which case leave their hand alone. */
+  const arrived = fresh.filter(n => !known.has(n));
+  for (const n of fresh) known.add(n);
+  if (arrived.length && document.activeElement !== pickEl) {
+    pickEl.value = arrived[arrived.length - 1];
+    say(pickEl.value + ' が増えました — ダウンロードできます');
+  }
+  downEl.disabled = !pickEl.value;
 }
 
 function say(text) { statusEl.textContent = text; }
@@ -144,12 +191,16 @@ worker.onmessage = e => {
     const img = new ImageData(new Uint8ClampedArray(m.frame), m.width, m.height);
     ctx.putImageData(img, 0, 0);
   }
-  if (m.files) setFiles(m.files, m.current);
+  if (m.files) setFiles(m.files);
   if (m.uploaded && m.uploaded.length) {
-    /* An uploaded drawing is what the visitor wants to see, so open it. */
+    /* It is on the guest's disk now.  Opening it is the program's job -- the
+       page will not do it, because that would throw away whatever is on the
+       screen and because 入出力 can do more than open (合成, 削除). */
+    for (const n of m.uploaded) known.add(n);
     pickEl.value = m.uploaded[m.uploaded.length - 1];
-    boot();
-    say(m.uploaded.join('、') + ' を読み込みました');
+    downEl.disabled = false;
+    say(m.uploaded.join('、') + ' を入れました — '
+        + 'JW_CAD の 入出力 → ①ファイル → ②読込 で開けます');
     return;
   }
   if (m.file) {
@@ -164,55 +215,49 @@ worker.onmessage = e => {
   }
   if (m.booted !== undefined && m.booted !== booted) {
     booted = m.booted;
-    if (booted) say(pickEl.value);
+    if (booted) say('');
   }
   if (m.message) {
-    say(m.message);
+    say(m.message + '（読み込み直すと最初から始まります）');
     consoleEl.hidden = !m.console;
     consoleEl.textContent = m.console || '';
   }
 };
 
-function boot() {
-  booted = false;
-  lastPick = pickEl.value;
-  say('起動中…');
-  consoleEl.hidden = true;
-  ctx.fillStyle = '#000';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  worker.postMessage({ boot: pickEl.value });
-}
-/* Choosing another drawing starts the guest again, which is the only way in
-   from outside -- but the program is already running by then and whatever has
-   been drawn and not saved goes with it.  So it asks.  (Opening a drawing
-   *without* losing anything is what the program's own 入出力 is for, and an
-   uploaded file is in its list.) */
+/* The guest has the keyboard, and a page control takes it away the moment it
+   is clicked -- after which nothing the visitor types reaches JW_CAD until
+   they click the drawing again.  So every control hands it straight back. */
+function toGuest() { imeEl.focus({ preventScroll: true }); }
+
 /* Going to open the list is as good a moment as any to make sure it is
    up to date -- the worker re-reads the guest's disk every couple of seconds
    anyway, but a drawing just saved should be there the instant it is looked
    for. */
 pickEl.addEventListener('pointerdown', () => worker.postMessage({ list: 1 }));
-pickEl.addEventListener('change', () => {
-  if (booted && lastPick
-      && !confirm('開き直すと、保存していない作図は消えます。よろしいですか？')) {
-    pickEl.value = lastPick;
-    return;
-  }
-  boot();
-});
+/* Choosing is only choosing.  **The page never opens a drawing**: the
+   program's own 入出力 does that, without losing what is on the screen. */
+pickEl.addEventListener('change', () => { downEl.disabled = !pickEl.value; });
 
 upEl.addEventListener('change', async () => {
   const files = [];
+
   for (const f of upEl.files) {
+    /* DOS sees 8.3 upper case; a name the guest cannot spell is a file the
+       visitor would never find again. */
     files.push({ name: f.name.toUpperCase(), buf: await f.arrayBuffer() });
   }
   upEl.value = '';                       // so the same file can be picked twice
-  if (files.length) worker.postMessage({ upload: files }, files.map(f => f.buf));
+  if (files.length) {
+    say('読み込んでいます…');
+    worker.postMessage({ upload: files }, files.map(f => f.buf));
+  }
+  toGuest();
 });
 
 downEl.addEventListener('click', () => {
   if (!pickEl.value) return;
   worker.postMessage({ download: pickEl.value });
+  toGuest();
 });
 
 /* Where a pointer event lands on the guest's 640x480, whatever the canvas has
