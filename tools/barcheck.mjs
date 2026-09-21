@@ -45,7 +45,8 @@ function el(id) {
 }
 
 const els = {};
-for (const id of ['screen', 'status', 'console', 'pick', 'up', 'down', 'ime']) {
+for (const id of ['screen', 'status', 'console', 'pick', 'up', 'down',
+                  'pdf', 'png', 'ime']) {
   els[id] = el(id);
 }
 const body = { children: [], append(a) { this.children.push(a); } };
@@ -99,6 +100,9 @@ worker.onmessage({ data: { files: [{ name: 'MYWORK.JWC', size: 2 },
                                    { name: 'SAMPLE0.JWC', size: 1 },
                                    { name: 'TEST1.JWC', size: 1 }] } });
 
+ok(els.pdf.disabled === true && els.png.disabled === true,
+   'PDF and PNG are dead while there is no plotter output');
+
 const marked = els.pick.options.filter(o => o.textContent.startsWith('●'));
 ok(marked.length === 1 && marked[0].value === 'MYWORK.JWC',
    'a drawing that was not there at the start is marked ●');
@@ -145,5 +149,43 @@ ok(anchors[0].clicked === 1, 'and clicks it');
 ok(revoked === 0, 'and does NOT revoke the object URL in the same turn');
 await new Promise(r => setTimeout(r, 30));
 ok(revoked === 0, 'nor a moment later -- the browser is still reading it');
+
+/* The plotter's output.  **The name tells you nothing**: 入出力 → ②ﾌﾟﾛｯﾀ →
+   ③ﾌｧｲﾙ出力 writes exactly the name it was given, so answering `PLOT` leaves
+   a file called `PLOT` with no extension at all.  The worker says which
+   files are plotter output by reading them; the page must go by that flag
+   and not by `.PLT`, or the buttons stay grey and the visitor is told to
+   press something that cannot be pressed. */
+posted.length = 0;
+worker.onmessage({ data: { files: [{ name: 'MYWORK.JWC', size: 2 },
+                                   { name: 'PLOT', size: 900, plot: true },
+                                   { name: 'SAMPLE0.JWC', size: 1 }] } });
+ok(els.pdf.disabled === false && els.png.disabled === false,
+   'PDF and PNG come alive when plotter output appears, extension or not');
+const plotted = els.pick.options.filter(o => o.value === 'PLOT');
+ok(plotted.length === 1 && plotted[0].textContent.includes('プロッタ出力'),
+   'and the list says which one it is');
+
+posted.length = 0;
+els.pick.value = 'MYWORK.JWC';
+fire('pick:change');
+fire('pdf:click');
+ok(posted.some(m => m.download === 'PLOT' && m.as === 'pdf'),
+   'PDF takes the plotter output even when a drawing is the one picked');
+posted.length = 0;
+fire('png:click');
+ok(posted.some(m => m.download === 'PLOT' && m.as === 'png'), 'and so does PNG');
+
+/* What the guest was booted on is what the list should show -- not whatever
+   sorts first.  This is how AUTO.JWC came to look like the opening drawing. */
+worker.onmessage({ data: { current: 'SAMPLE2.JWC',
+                           files: [{ name: 'AAA.JWC', size: 1 },
+                                   { name: 'SAMPLE2.JWC', size: 1 }] } });
+els.pick.value = '';
+worker.onmessage({ data: { current: 'SAMPLE2.JWC',
+                           files: [{ name: 'AAA.JWC', size: 1 },
+                                   { name: 'SAMPLE2.JWC', size: 1 }] } });
+ok(els.pick.value === 'SAMPLE2.JWC',
+   'the list shows the drawing the guest actually has open');
 
 process.exit(bad ? 1 : 0);

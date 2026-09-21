@@ -103,7 +103,7 @@ function turn(mine) {
    * and then: the guest writes a drawing when the visitor asks it to, and the
    * page's list of what it could download has to notice. */
   const now = Date.now();
-  if (booted && (!wasBooted || now - lastSent > 2000)) {
+  if (booted && (!wasBooted || now - lastList > 2000)) {
     lastList = now;
     msg.files = listing();
     msg.current = current;
@@ -124,18 +124,54 @@ function listing() {
   const out = [];
   try {
     for (const name of Module.FS.readdir(ROOT)) {
-      /* .PLT as well as .JWC: that is what 入出力 → ②ﾌﾟﾛｯﾀ → ③ﾌｧｲﾙ出力
-       * leaves behind, and the page turns it into a PDF and a PNG. */
-      if (!/\.(JWC|PLT)$/i.test(name)) continue;
       let size = 0;
-      try { size = Module.FS.stat(ROOT + '/' + name).size; } catch (err) { /* gone */ }
-      out.push({ name, size });
+      try { size = Module.FS.stat(ROOT + '/' + name).size; } catch (err) { continue; }
+      const plot = isPlot(name, size);
+
+      if (!plot && !/\.JWC$/i.test(name)) continue;
+      out.push({ name, size, plot });
     }
   } catch (err) {
     return [];
   }
   out.sort((a, b) => a.name.localeCompare(b.name));
   return out;
+}
+
+/* Is this file what the program's plotter output left behind?
+ *
+ * **Not by its name.**  JW_CAD writes the name it was given, exactly --
+ * answer `PLOT` at the 出力ファイル名 ? prompt and the file on the disk is
+ * `PLOT`, with no extension at all.  Going by `.PLT` meant the file never
+ * showed up in the list and the PDF/PNG buttons stayed grey, which is what
+ * a visitor hit first.  So look at what is in it: plot/WASM.JWP makes the
+ * plotter start with a bounding box -- `B` and four numbers.
+ *
+ * The answer is cached per name+size, because the listing runs every two
+ * seconds and the guest's disk does not change nearly that often. */
+const plotSeen = new Map();
+
+function isPlot(name, size) {
+  const key = name + ':' + size;
+  const had = plotSeen.get(key);
+
+  if (had !== undefined) return had;
+  let yes = false;
+
+  try {
+    const st = Module.FS.open(ROOT + '/' + name, 'r');
+    const head = new Uint8Array(48);
+    const n = Module.FS.read(st, head, 0, head.length, 0);
+
+    Module.FS.close(st);
+    const line = String.fromCharCode(...head.subarray(0, n)).split(/[\r\n]/)[0];
+
+    yes = /^B(\s+-?\d+){4}\s*$/.test(line);
+  } catch (err) {
+    yes = false;
+  }
+  plotSeen.set(key, yes);
+  return yes;
 }
 
 function boot(drawing) {
@@ -159,7 +195,11 @@ function boot(drawing) {
   setTimeout(() => turn(mine), 0);
 }
 
-let pendingBoot = 'SAMPLE0.JWC';
+/* What the page opens with, until the visitor picks something else.
+   SAMPLE2 rather than SAMPLE0: a plan drawing shows what the program
+   does, and SAMPLE0 is an empty sheet with a frame round it.  The
+   port's page opens the same one. */
+let pendingBoot = 'SAMPLE2.JWC';
 
 onmessage = e => {
   const m = e.data;

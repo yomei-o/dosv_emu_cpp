@@ -41,7 +41,18 @@ done
 
 EMBED=""
 # The program, its help and its palette, plus the drawings that ship with it.
-for f in "$ORIG"/JW_CADV.EXE "$ORIG"/JW_PAL.DAT "$ORIG"/*.JWC "$ORIG"/JW_CADV.HLP; do
+#
+# **SAMPLE*/TEST* and not *.JWC.** jwcv222h.lzh holds exactly fourteen
+# drawings, SAMPLE0-6 and TEST1-7, and those are the ones a visitor should
+# find. But the port's orig/ is also where the drawings written while
+# analysing go -- what JW_CAD saves when it runs here (AUTO.JWC), and the
+# question drawings made to ask the original something (QPICK, QBYTES,
+# ONE2). They are in the port's .gitignore, so they are not in either
+# repository; a plain *.JWC baked them into the .wasm anyway, and then the
+# page listed AUTO.JWC first -- alphabetical -- and it looked for all the
+# world as though the program had opened it at boot.
+for f in "$ORIG"/JW_CADV.EXE "$ORIG"/JW_PAL.DAT "$ORIG"/SAMPLE*.JWC \
+         "$ORIG"/TEST*.JWC "$ORIG"/JW_CADV.HLP; do
     [ -f "$f" ] || continue
     EMBED="$EMBED --embed-file $f@/orig/$(basename "$f")"
 done

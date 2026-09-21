@@ -120,12 +120,19 @@
           <code>PLOT</code> のように打って [Enter]</li>
       <li>上の行の <code>①確定</code> → <code>① 実行</code></li>
       <li>「作図処理中」の数が 0 になるまで待つ（図面によっては数十秒）</li>
-      <li>一覧に <code>PLOT</code> が出たら、ここの
+      <li>画面の下の <strong>エミュレータの中</strong> の選択欄に
+          <code>● PLOT （プロッタ出力）</code> が出ます
+          <small>（数秒おきに見に行っているので、出るまで少し待ちます。
+          欄を一度押すと見に行きます）</small></li>
+      <li>それを選んで、その右の
           <strong>ＰＤＦ</strong> か <strong>ＰＮＧ</strong> を押す</li>
     </ol>
     <p>
       <small>ＰＤＦ／ＰＮＧ の釦は、プロッタ出力のファイルがまだ無いあいだは
-      押せません。<code>WASM.JWP</code> は、本物のプロッタの言葉（HP-GL）の
+      押せません。出力ファイル名は打ったとおりの名前になります
+      （<code>PLOT</code> と打てば <code>PLOT</code>。拡張子は付きません）。
+      選択欄には中身を見て「プロッタ出力」と付けるので、どんな名前でも
+      かまいません。<code>WASM.JWP</code> は、本物のプロッタの言葉（HP-GL）の
       代わりに読みやすい行を書かせるための設定ファイルで、こちらで用意して
       あります。</small>
     </p>
@@ -172,7 +179,33 @@ let booted = false;
    there then is one the visitor has just saved, and that is the one they are
    reaching for, so it is marked and picked out for them. */
 let atStart = null;
+let openDrawing = '';
+let plots = new Set();
 const known = new Set();
+
+/* The fourteen drawings that ship with JW_CAD, and what each one calls
+   itself.  The names are not ours: every .JWC carries its 図面名 at offset
+   40 of the header, and this is that field, so the page and the port's page
+   say the same thing about the same drawing.
+
+   Anything not in here -- a drawing the visitor saved or uploaded, or the
+   plotter's output -- is shown by its name alone. */
+const TITLES = {
+  'SAMPLE0.JWC': '図面枠',
+  'SAMPLE1.JWC': '木造平面図',
+  'SAMPLE2.JWC': 'マンション 基準階平面図 １／１００',
+  'SAMPLE3.JWC': 'マンション 日影図 １／２００',
+  'SAMPLE4.JWC': 'マンション 南側立面図 １／１００',
+  'SAMPLE5.JWC': 'マンション ２．５Ｄ',
+  'SAMPLE6.JWC': '木造間取図＋設備図',
+  'TEST1.JWC': '日影図 ＴＥＳＴ用データ（陸屋根）',
+  'TEST2.JWC': '日影図 ＴＥＳＴ用データ（切妻屋根）',
+  'TEST3.JWC': '日影図ＴＥＳＴ用データ（ドーム屋根の概略日影図）',
+  'TEST4.JWC': '日影図ＴＥＳＴ用データ（かまぼこ屋根の概略日影図）',
+  'TEST5.JWC': '特殊な日影図',
+  'TEST6.JWC': '２．５用ＴＥＳＴデータ',
+  'TEST7.JWC': '壁面日影 サンプル',
+};
 
 /* The drawings on the guest's disk.  The worker sends the list after every
    boot and every couple of seconds while the guest is running, so a drawing
@@ -181,6 +214,10 @@ function setFiles(files) {
   const was = pickEl.value;
   const fresh = [];
 
+  /* Which of them are plotter output.  The worker decides that by reading
+     the file, not by its name: JW_CAD writes exactly the name it was given
+     and `PLOT` is a perfectly ordinary answer to 出力ファイル名 ?. */
+  plots = new Set(files.filter(f => f.plot).map(f => f.name));
   if (!atStart) atStart = new Set(files.map(f => f.name));
   pickEl.textContent = '';
   for (const f of files) {
@@ -191,11 +228,19 @@ function setFiles(files) {
     /* ● marks a drawing that was not on the disk when the page opened.  The
        list is alphabetical, so without it a drawing just saved is lost among
        the fourteen that ship with the program. */
-    o.textContent = (isNew ? '● ' : '') + f.name;
+    o.textContent = (isNew ? '● ' : '') + f.name
+                  + (f.plot ? '  （プロッタ出力）'
+                            : TITLES[f.name] ? '  ' + TITLES[f.name] : '');
     pickEl.append(o);
     if (isNew) fresh.push(f.name);
   }
   if (files.some(f => f.name === was)) pickEl.value = was;
+  /* Otherwise the drawing the guest was booted on -- **not** whatever sorts
+     first.  The list is alphabetical, so an untouched page used to sit there
+     showing the first name on the disk while the program had quite another
+     drawing open, which reads as if the page had opened that one. */
+  else if (openDrawing && files.some(f => f.name === openDrawing))
+    pickEl.value = openDrawing;
   /* A drawing appearing is the visitor having just saved it, so it becomes
      the one the button will take -- unless they are in the middle of
      choosing something else, in which case leave their hand alone. */
@@ -244,6 +289,7 @@ worker.onmessage = e => {
     const img = new ImageData(new Uint8ClampedArray(m.frame), m.width, m.height);
     ctx.putImageData(img, 0, 0);
   }
+  if (m.current !== undefined) openDrawing = m.current;
   if (m.files) { setFiles(m.files); plotButtons(); }
   if (m.uploaded && m.uploaded.length) {
     /* It is on the guest's disk now.  Opening it is the program's job -- the
@@ -298,9 +344,8 @@ pickEl.addEventListener('change', () => {
    the one picked in the list when that is one, otherwise the newest one
    there -- so a person does not have to know to go and find it. */
 function plotFile() {
-  if (/\.PLT$/i.test(pickEl.value || '')) return pickEl.value;
-  const all = [...pickEl.options].map(o => o.value)
-                                 .filter(v => /\.PLT$/i.test(v));
+  if (plots.has(pickEl.value)) return pickEl.value;
+  const all = [...pickEl.options].map(o => o.value).filter(v => plots.has(v));
 
   return all.length ? all[all.length - 1] : '';
 }

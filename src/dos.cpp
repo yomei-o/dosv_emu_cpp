@@ -14,6 +14,7 @@ namespace dosemu {
 // own, so nothing allocates over them.
 
 bool Dos::trace = getenv("DOSEMU_DOS_TRACE") != nullptr;
+static const bool file_trace = getenv("DOSEMU_FILE_TRACE") != nullptr;
 
 // See the comment on the declaration in src/dos.h.
 uint64_t Dos::clock_per = [] {
@@ -1560,6 +1561,13 @@ bool Dos::int21() {
             return true;
         }
         case 0x3D: {                                                // open file (AL access, DS:DX name) -> handle
+            // DOSEMU_FILE_TRACE: the names, not just the numbers. The INT 21h
+            // trace prints ds:dx, and chasing every one of those through a
+            // memory dump to find out what the guest is looking for is a
+            // waste of an afternoon.
+            if (file_trace)
+                std::fprintf(stderr, "[file] open  %s\n",
+                             read_asciiz(cpu_.sreg[DS], cpu_.r[DX]).c_str());
             int h = files_.open(read_asciiz(cpu_.sreg[DS], cpu_.r[DX]), cpu_.r[AX] & 0x03);
             if (h < 0) { cpu_.flags |= CF; cpu_.r[AX] = -h; } else { cpu_.flags &= ~CF; cpu_.r[AX] = h; }
             return true;

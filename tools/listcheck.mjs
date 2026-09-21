@@ -12,6 +12,12 @@
  * throttle resetting the clock the listing interval was measured against, so
  * after the boot the list was never sent again.  The visitor saved a drawing
  * and could not then pick it.
+ *
+ * The same day, the plotter's output: 入出力 → ②ﾌﾟﾛｯﾀ → ③ﾌｧｲﾙ出力 writes the
+ * name it was given and nothing else, so answering `PLOT` leaves a file
+ * called `PLOT`.  The listing went by `.PLT`, so it never appeared and the
+ * PDF/PNG buttons stayed grey.  Both files are planted here now, and the
+ * plotter one has to come back marked `plot`.
  */
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -35,6 +41,10 @@ vm.runInThisContext(readFileSync('dosemu-worker.js', 'utf8'),
                     { filename: 'dosemu-worker.js' });
 
 const NEW = 'MADEUP.JWC';
+/* What JW_CAD leaves when it plots through plot/WASM.JWP -- an extensionless
+ * name, and a bounding box on the first line. */
+const PLOT = 'PLOT';
+const PLOT_BODY = 'B  -59450  -42050  59450  42050\nT 1\nM  -100  -100\nD  100  100\n';
 const started = Date.now();
 let planted = false;
 
@@ -49,12 +59,27 @@ function look() {
     if (FS) {
       FS.writeFile('orig/' + NEW, new Uint8Array(readFileSync(
           '../jwcad_dos_wasm/orig/SAMPLE0.JWC')));
+      FS.writeFile('orig/' + PLOT, PLOT_BODY);
       planted = true;
       console.log('planted ' + NEW + ' after ' + lists.length + ' listings');
     }
   }
-  if (planted && lists.some(m => m.files.some(f => f.name === NEW))) {
+  const got = lists.find(m => m.files.some(f => f.name === NEW));
+
+  if (planted && got) {
+    const p = got.files.find(f => f.name === PLOT);
+
     console.log('the list picked it up (' + lists.length + ' listings sent)');
+    if (!p) {
+      console.error('but not ' + PLOT + ' -- the plotter output is invisible,'
+                    + ' so the PDF and PNG buttons stay grey');
+      process.exit(1);
+    }
+    if (!p.plot) {
+      console.error(PLOT + ' is listed but not marked plot');
+      process.exit(1);
+    }
+    console.log(PLOT + ' is there and marked plot');
     process.exit(0);
   }
   if (Date.now() - started > 120000) {
