@@ -18,6 +18,10 @@
  * called `PLOT`.  The listing went by `.PLT`, so it never appeared and the
  * PDF/PNG buttons stayed grey.  Both files are planted here now, and the
  * plotter one has to come back marked `plot`.
+ *
+ * And on 2026-09-23 the same hole for DXF: 入出力 → ①ファイル → ⑥ＤＸＦ →
+ * ① 保存 writes `NAME.dxf`, the listing matched `.JWC` alone, and a file the
+ * visitor had just written was not in the list to download.
  */
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -45,6 +49,10 @@ const NEW = 'MADEUP.JWC';
  * name, and a bounding box on the first line. */
 const PLOT = 'PLOT';
 const PLOT_BODY = 'B  -59450  -42050  59450  42050\nT 1\nM  -100  -100\nD  100  100\n';
+/* What ⑥ＤＸＦ → ① 保存 leaves: the drawing's name and a **lower case**
+   `.dxf`, which is how the file comes back off the guest's disk. */
+const DXF = 'MADEUP.dxf';
+const DXF_BODY = '  0\r\nSECTION\r\n  2\r\nENTITIES\r\n  0\r\nENDSEC\r\n  0\r\nEOF\r\n';
 const started = Date.now();
 let planted = false;
 
@@ -60,6 +68,7 @@ function look() {
       FS.writeFile('orig/' + NEW, new Uint8Array(readFileSync(
           '../jwcad_dos_wasm/orig/SAMPLE0.JWC')));
       FS.writeFile('orig/' + PLOT, PLOT_BODY);
+      FS.writeFile('orig/' + DXF, DXF_BODY);
       planted = true;
       console.log('planted ' + NEW + ' after ' + lists.length + ' listings');
     }
@@ -80,6 +89,12 @@ function look() {
       process.exit(1);
     }
     console.log(PLOT + ' is there and marked plot');
+    if (!got.files.some(f => f.name === DXF)) {
+      console.error('but not ' + DXF + ' -- a DXF the visitor has just saved'
+                    + ' is invisible, so it cannot be downloaded');
+      process.exit(1);
+    }
+    console.log(DXF + ' is there too');
     process.exit(0);
   }
   if (Date.now() - started > 120000) {

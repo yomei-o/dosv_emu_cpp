@@ -76,7 +76,7 @@
        whatever is being drawn. -->
   <div class="bar">
     <label class="filebtn">アップロード<input type="file" id="up"
-           accept=".jwc,.JWC" multiple></label>
+           accept=".jwc,.JWC,.dxf,.DXF" multiple></label>
     <span class="group">
       <label for="pick">エミュレータの中</label>
       <select id="pick"></select>
@@ -140,12 +140,14 @@
       あります。</small>
     </p>
     <p>
-      <strong>アップロード</strong>——手元の .JWC をディスクに置きます。開くのは
-      そのあと <code>入出力</code> → <code>①ファイル</code> → <code>②読込</code> で。
+      <strong>アップロード</strong>——手元の .JWC や .DXF をディスクに置きます。開くのは
+      そのあと <code>入出力</code> → <code>①ファイル</code> → <code>②読込</code>
+      （.DXF なら <code>⑥ＤＸＦ</code> → <code>② 読込</code>）で。
       （作図中のものは消えません。）<br>
       <strong>ダウンロード</strong>——一覧で選んだ図面を手元に保存します。取り出せるのは
       <strong>ディスクにある中身</strong>なので、作図したものが欲しいときは先に
-      <code>入出力</code> → <code>①保存</code> してから押してください。
+      <code>入出力</code> → <code>①保存</code>（DXF なら <code>⑥ＤＸＦ</code> →
+      <code>① 保存</code>）してから押してください。
       保存して増えた図面には <code>●</code> が付き、そのまま選ばれた状態になります。
     </p>
     <p>
@@ -179,7 +181,7 @@ const imeEl = document.getElementById('ime');
    is still the old one, which is what happened on 2026-09-21.  The stamp is
    written by tools/build_wasm.sh on every build, and the worker passes it on
    to the two files it loads. */
-const DE_BUILD = '20260921234246';
+const DE_BUILD = '20260922222009';
 const worker = new Worker('dosemu-worker.js?v=' + DE_BUILD);
 /* tools/barcheck.mjs drives the page headlessly and needs the one object
    the whole script hangs off. */

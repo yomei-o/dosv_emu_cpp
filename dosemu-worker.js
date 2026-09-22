@@ -128,9 +128,13 @@ function turn(mine) {
   setTimeout(() => turn(mine), 0);
 }
 
-/* The drawings on the guest's disk, by name.  Only the drawings: the page
- * offers these to open and to download, and the program, its help file and
- * the fonts are not the visitor's to take. */
+/* What the guest has written, by name: the drawings, the DXF files 入出力 →
+ * ①ファイル → ⑥ＤＸＦ → ① 保存 writes, and the plotter output.  Not the
+ * program, its help file or the fonts -- those are not the visitor's to take.
+ *
+ * **The DXF was missing here.**  JW_CAD writes `NAME.dxf` and the list only
+ * matched `.JWC`, so a file the visitor had just saved never appeared and the
+ * ダウンロード button could not reach it. */
 function listing() {
   const out = [];
   try {
@@ -139,7 +143,7 @@ function listing() {
       try { size = Module.FS.stat(ROOT + '/' + name).size; } catch (err) { continue; }
       const plot = isPlot(name, size);
 
-      if (!plot && !/\.JWC$/i.test(name)) continue;
+      if (!plot && !/\.(JWC|DXF)$/i.test(name)) continue;
       out.push({ name, size, plot });
     }
   } catch (err) {
